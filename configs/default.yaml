@@ -1,0 +1,15 @@
+
+seed: 42
+image_size: 512
+batch_size: 8
+num_workers: 0
+device: mps
+
+paths:
+  raw: data/raw
+  processed: data/processed
+  masks: data/processed/masks
+  splits: data/processed/splits.json
+  results: results
+  artifacts: artifacts
+  external_results_md: ~/Desktop/hubmap_phase2_results.md

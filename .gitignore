@@ -130,3 +130,13 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# macOS
+.DS_Store
+
+# Project-specific
+data/
+*.pth
+results/*
+!results/.gitkeep
+

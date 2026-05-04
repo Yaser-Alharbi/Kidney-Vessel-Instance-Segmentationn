@@ -1,0 +1,16 @@
+{
+  "train_wsis": [
+    1
+  ],
+  "val_wsis": [
+    2
+  ],
+  "n_train_tiles": 270,
+  "n_val_tiles": 152,
+  "overlap_count": 0,
+  "n_noisy_train_tiles": 237,
+  "noisy_train_wsis": [
+    1
+  ],
+  "val_leak_excluded": 293
+}

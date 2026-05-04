@@ -1,0 +1,76 @@
+{
+  "inspection": {
+    "n_tiles_on_disk": 7033,
+    "n_polygon_lines": 1633,
+    "dataset_value_counts": {
+      "1": 422,
+      "2": 1211,
+      "3": 5400
+    },
+    "source_wsi_value_counts": {
+      "1": 507,
+      "2": 445,
+      "3": 410,
+      "4": 271,
+      "6": 600,
+      "7": 600,
+      "8": 600,
+      "9": 600,
+      "10": 600,
+      "11": 600,
+      "12": 600,
+      "13": 600,
+      "14": 600
+    },
+    "dataset1_wsi_value_counts": {
+      "1": 270,
+      "2": 152
+    },
+    "sample_polygon_keys": [
+      "id",
+      "annotations"
+    ],
+    "sample_polygon_first_annotation_keys": [
+      "type",
+      "coordinates"
+    ],
+    "annotation_type_counts": {
+      "glomerulus": 567,
+      "blood_vessel": 16054,
+      "unsure": 897
+    },
+    "samples_figure_path": "/Users/yaseralharbi/Desktop/Masters/Sem 2/AMLS2/new-assignment-Yaser-Alharbi/results/data_samples.png"
+  },
+  "masks": {
+    "total_tiles_in_jsonl": 1633,
+    "masks_written": 0,
+    "masks_skipped_existing": 1633,
+    "annotation_counts": {
+      "glomerulus": 567,
+      "blood_vessel": 16054,
+      "unsure": 897
+    },
+    "blood_vessel_polygons_drawn": 0,
+    "mean_vessel_pixel_fraction": 0.044988446489697353,
+    "min_vessel_pixel_fraction": 0.0,
+    "max_vessel_pixel_fraction": 0.5304298400878906
+  },
+  "splits": {
+    "train_wsis": [
+      1
+    ],
+    "val_wsis": [
+      2
+    ],
+    "n_train_tiles": 270,
+    "n_val_tiles": 152,
+    "overlap_count": 0,
+    "n_noisy_train_tiles": 237,
+    "noisy_train_wsis": [
+      1
+    ],
+    "val_leak_excluded": 293
+  },
+  "train_len": 270,
+  "val_len": 152
+}
