@@ -49,8 +49,9 @@ def _write_results_md(
     splits: SplitSummary,
     train_len: int,
     val_len: int,
+    test_len: int = 0,
 ) -> Path:
-    """Render the human-readable Phase 2 report at `~/Desktop/hubmap_phase2_results.md`."""
+    """Render the Phase 2 report to ~/Desktop/hubmap_phase2_results.md."""
     md_path = cfg.paths.external_results_md
     md_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -90,9 +91,15 @@ Training Strategies → Data Augmentation
 - Mean vessel pixel fraction: {masks.mean_vessel_pixel_fraction:.6f}
 
 ## Splits
-- Train WSI(s): {splits.train_wsis}, {splits.n_train_tiles} tiles
-- Val WSI(s): {splits.val_wsis}, {splits.n_val_tiles} tiles
-- Overlap check: {overlap_status}
+- Train WSI(s): {splits.train_wsis}, {splits.n_train_tiles} tiles (dataset 1, clean labels)
+- Val WSI(s): {splits.val_wsis}, {splits.n_val_tiles} tiles (dataset 1, clean labels)
+- Test WSI(s): {splits.test_wsis}, {splits.n_test_tiles} tiles (dataset 2, **noisy labels**)
+- Test strategy: {splits.test_strategy}
+- Pairwise overlap check: {overlap_status}
+
+Test labels are dataset 2 (auto-generated, noisy). Use the test set for
+cross-WSI generalization comparisons between models, not for absolute
+Dice (the score is biased by label noise).
 
 ## Mask generation
 - Masks created: {masks.masks_written + masks.masks_skipped_existing} (newly written this run: {masks.masks_written}; skipped existing: {masks.masks_skipped_existing})
@@ -112,6 +119,7 @@ Training Strategies → Data Augmentation
 ## Dataset objects
 - HuBMAPDataset(train) length: {train_len}
 - HuBMAPDataset(val) length:   {val_len}
+- HuBMAPDataset(test) length:  {test_len}
 
 ## Next phase
 Phase 3: model development (U-Net + SegFormer baselines, augmentation pipelines, training loop).
@@ -175,6 +183,7 @@ def _replay_from_artifacts(cfg: Config) -> None:
         splits=splits,
         train_len=int(payload["train_len"]),
         val_len=int(payload["val_len"]),
+        test_len=int(payload.get("test_len", 0)),
     )
     print(f"[main] replay complete; report at {md_path}")
 
@@ -251,8 +260,12 @@ def main():
     img_dir = cfg.paths.raw / "train"
     train_ds = HuBMAPDataset(split_payload["train"], img_dir, cfg.paths.masks)
     val_ds = HuBMAPDataset(split_payload["val"], img_dir, cfg.paths.masks)
+    test_ds = HuBMAPDataset(
+        split_payload.get("test", []), img_dir, cfg.paths.masks
+    )
     print(f"[main] train dataset length : {len(train_ds)}")
     print(f"[main] val   dataset length : {len(val_ds)}")
+    print(f"[main] test  dataset length : {len(test_ds)}")
 
     sample = train_ds[0]
     print(
@@ -282,6 +295,7 @@ def main():
         splits=splits,
         train_len=len(train_ds),
         val_len=len(val_ds),
+        test_len=len(test_ds),
     )
     print(f"[main] external report saved : {md_path}")
 
@@ -292,6 +306,7 @@ def main():
         "splits": asdict(splits),
         "train_len": len(train_ds),
         "val_len": len(val_ds),
+        "test_len": len(test_ds),
     }
     with open(summary_path, "w") as f:
         json.dump(payload, f, indent=2)
