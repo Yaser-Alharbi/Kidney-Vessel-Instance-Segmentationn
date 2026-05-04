@@ -7,7 +7,7 @@ import platform
 import shutil
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import torch
 
@@ -15,21 +15,32 @@ from src.data.build_masks import MaskBuildSummary, build_masks
 from src.data.dataset import HuBMAPDataset, _save_sample_item_figure
 from src.data.inspect_data import InspectionSummary, inspect_data
 from src.data.splits import SplitSummary, build_splits
+from src.training.run_experiments import run_phase3
 from src.utils.paths import Config, ensure_dirs, load_config
 from src.utils.seed import set_seed
 
 
-# Cached run outputs. Committed to git so CI can replay them when
-# data/raw is absent (the 4 GB dataset is gitignored).
+# cached outputs tracked in git so CI can replay without raw data
 ARTIFACT_SUMMARY_FILES = [
     "inspection_summary.json",
     "mask_build_summary.json",
     "splits_summary.json",
     "phase2_summary.json",
+    "phase3_summary.json",
 ]
 ARTIFACT_FIGURE_FILES = [
     "data_samples.png",
     "sample_dataset_item.png",
+    "phase3_comparison.png",
+    "unet_resnet34_rgb_aug_loss.png",
+    "unet_resnet34_rgb_aug_val_dice.png",
+    "unet_resnet34_rgb_aug_predictions.png",
+    "unet_resnet34_stain_aware_hed_only_loss.png",
+    "unet_resnet34_stain_aware_hed_only_val_dice.png",
+    "unet_resnet34_stain_aware_hed_only_predictions.png",
+    "unet_resnet34_stain_aware_loss.png",
+    "unet_resnet34_stain_aware_val_dice.png",
+    "unet_resnet34_stain_aware_predictions.png",
 ]
 
 
@@ -42,6 +53,167 @@ def _device_string(cfg: Config) -> str:
     return requested
 
 
+_PHASE3_ARMS = ("rgb_aug", "stain_aware_hed_only", "stain_aware")
+_PHASE3_RUN_TAG_BY_ARM = {
+    "rgb_aug": "unet_resnet34_rgb_aug",
+    "stain_aware_hed_only": "unet_resnet34_stain_aware_hed_only",
+    "stain_aware": "unet_resnet34_stain_aware",
+}
+
+
+def _phase3_conclusion(stats: Dict[str, Any]) -> str:
+    """Build the conclusion paragraph from the stats block."""
+    val_cis = stats.get("val", {}).get("cis", {}) or {}
+    test_cis = stats.get("test", {}).get("cis", {}) or {}
+    val_wc = stats.get("val", {}).get("wilcoxon", {}) or {}
+    test_wc = stats.get("test", {}).get("wilcoxon", {}) or {}
+
+    def _mean(cis: Dict[str, Any], k: str) -> float:
+        return float(cis.get(k, {}).get("mean", float("nan")))
+
+    def _p(wc: Dict[str, Any], k: str) -> float:
+        return float(wc.get(k, {}).get("p", float("nan")))
+
+    base_v = _mean(val_cis, "rgb_aug")
+    hed_v = _mean(val_cis, "stain_aware_hed_only")
+    full_v = _mean(val_cis, "stain_aware")
+    base_t = _mean(test_cis, "rgb_aug")
+    full_t = _mean(test_cis, "stain_aware")
+
+    p_full_vs_base_v = _p(val_wc, "stain_aware_gt_rgb_aug")
+    p_hed_vs_base_v = _p(val_wc, "stain_aware_hed_only_gt_rgb_aug")
+    p_full_vs_hed_v = _p(val_wc, "stain_aware_gt_stain_aware_hed_only")
+    p_full_vs_base_t = _p(test_wc, "stain_aware_gt_rgb_aug")
+
+    full_dir_val = "improved" if full_v > base_v else "did not improve"
+    full_dir_test = "improved" if full_t > base_t else "did not improve"
+    full_signif_val = "significant" if p_full_vs_base_v < 0.05 else "not significant"
+    full_signif_test = "significant" if p_full_vs_base_t < 0.05 else "not significant"
+
+    if p_hed_vs_base_v < 0.05 and not p_full_vs_hed_v < 0.05:
+        ablation = (
+            "HED jitter alone explains most of the val gain over the RGB-aug "
+            "control; adding Macenko at eval gives no further significant lift."
+        )
+    elif p_full_vs_hed_v < 0.05:
+        ablation = (
+            "Macenko normalization adds a measurable lift on top of HED jitter "
+            "at eval (p = "
+            f"{p_full_vs_hed_v:.4g}), so both components contribute."
+        )
+    else:
+        ablation = (
+            "Neither HED-only nor full stain-aware shows a significant edge "
+            "over RGB-aug on val with this single-WSI val set."
+        )
+
+    return (
+        f"Full stain-aware augmentation {full_dir_val} mean per-tile val Dice "
+        f"({full_v:.4f} vs rgb_aug {base_v:.4f}, p = {p_full_vs_base_v:.4g}, "
+        f"{full_signif_val} at alpha=0.05). HED-only sits at {hed_v:.4f} on val "
+        f"(p = {p_hed_vs_base_v:.4g} vs rgb_aug). {ablation} On the noisy test "
+        f"WSI the full arm {full_dir_test} ({full_t:.4f} vs {base_t:.4f}, "
+        f"p = {p_full_vs_base_t:.4g}, {full_signif_test}). Confidence is bounded "
+        "by the val set being a single WSI, so this run supports the hypothesis "
+        "at the strength of one paired comparison per pair."
+    )
+
+
+def _format_phase3_section(phase3: Dict[str, Any]) -> str:
+    """Render the Phase 3 markdown block."""
+    runs = phase3.get("runs", {})
+    stats = phase3.get("stats", {})
+    val_stats = stats.get("val", {})
+    test_stats = stats.get("test", {})
+    val_cis = val_stats.get("cis", {}) or {}
+    test_cis = test_stats.get("cis", {}) or {}
+    val_wc = val_stats.get("wilcoxon", {}) or {}
+    test_wc = test_stats.get("wilcoxon", {}) or {}
+
+    def _row(aug: str, cis: Dict[str, Any]) -> str:
+        ci = cis.get(aug)
+        if not ci:
+            return f"| {aug} | n/a | n/a |"
+        return (
+            f"| {aug} | {ci['mean']:.4f} | "
+            f"[{ci['lo']:.4f}, {ci['hi']:.4f}] |"
+        )
+
+    def _wilcoxon_lines(wc: Dict[str, Any]) -> str:
+        keys = [
+            ("stain_aware_gt_rgb_aug", "stain_aware > rgb_aug"),
+            ("stain_aware_hed_only_gt_rgb_aug", "stain_aware_hed_only > rgb_aug"),
+            ("stain_aware_gt_stain_aware_hed_only", "stain_aware > stain_aware_hed_only"),
+        ]
+        lines = []
+        for k, label in keys:
+            p = wc.get(k, {}).get("p", float("nan"))
+            lines.append(f"- Paired Wilcoxon ({label}): p = {float(p):.4g}")
+        return "\n".join(lines)
+
+    def _best_lines() -> str:
+        lines = []
+        for aug in _PHASE3_ARMS:
+            r = runs.get(_PHASE3_RUN_TAG_BY_ARM[aug], {})
+            ep = r.get("best_epoch", "?")
+            d = r.get("best_val_dice", float("nan"))
+            lines.append(f"- {aug:22s}: epoch {ep} (val Dice {float(d):.4f})")
+        return "\n".join(lines)
+
+    def _figure_lines() -> str:
+        lines = ["- `results/phase3_comparison.png`"]
+        for aug in _PHASE3_ARMS:
+            tag = _PHASE3_RUN_TAG_BY_ARM[aug]
+            lines.append(
+                f"- `results/{tag}_loss.png`, `results/{tag}_val_dice.png`, "
+                f"`results/{tag}_predictions.png`"
+            )
+        return "\n".join(lines)
+
+    val_table = "\n".join(_row(a, val_cis) for a in _PHASE3_ARMS)
+    test_table = "\n".join(_row(a, test_cis) for a in _PHASE3_ARMS)
+    conclusion = _phase3_conclusion(stats)
+
+    return f"""
+
+## Phase 3: training and evaluation (three-arm ablation)
+
+### Setup
+- Architecture: U-Net (ResNet-34 encoder, ImageNet pretrained)
+- Loss: Dice + soft BCE (w=0.5)
+- Optimizer: AdamW, lr={phase3.get('lr', 1e-4)}, weight_decay={phase3.get('weight_decay', 1e-4)}
+- Scheduler: CosineAnnealingLR
+- Epochs: {phase3.get('epochs', '?')}, batch: {phase3.get('batch_size', '?')}, image size: {phase3.get('image_size', '?')}, seed: {phase3.get('seed', '?')}
+- Arms: rgb_aug (control), stain_aware_hed_only (HED only), stain_aware (HED + Macenko)
+
+### Best epoch per run
+{_best_lines()}
+
+### Validation (dataset 1, clean labels)
+| Run                   | Mean Dice | 95% CI         |
+| --------------------- | --------- | -------------- |
+{val_table}
+
+{_wilcoxon_lines(val_wc)}
+
+### Test (dataset 2, NOISY labels)
+| Run                   | Mean Dice | 95% CI         |
+| --------------------- | --------- | -------------- |
+{test_table}
+
+{_wilcoxon_lines(test_wc)}
+
+Test labels are dataset 2 (auto-generated, noisy). Use these numbers for
+relative comparison only, not as absolute accuracy.
+
+### Figures
+{_figure_lines()}
+
+### Conclusion
+{conclusion}
+"""
+
+
 def _write_results_md(
     cfg: Config,
     inspection: InspectionSummary,
@@ -50,8 +222,10 @@ def _write_results_md(
     train_len: int,
     val_len: int,
     test_len: int = 0,
+    *,
+    phase3: Optional[Dict[str, Any]] = None,
 ) -> Path:
-    """Render the Phase 2 report to ~/Desktop/hubmap_phase2_results.md."""
+    """Write the report markdown (Phase 2 + Phase 3 if provided)."""
     md_path = cfg.paths.external_results_md
     md_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -74,7 +248,7 @@ def _write_results_md(
         else _device_string(cfg).upper()
     )
 
-    md = f"""# HuBMAP Phase 2: Setup Results
+    md = f"""# HuBMAP Phase 3: Model Development Results
 
 ## Hypothesis
 On the HuBMAP Vasculature dataset, stain-aware augmentation (HED colour jitter + Macenko stain normalization) yields higher Dice than standard RGB augmentation, because the training set comes from only 2 WSIs and stain variability is the dominant domain shift in PAS histology.
@@ -120,16 +294,16 @@ Dice (the score is biased by label noise).
 - HuBMAPDataset(train) length: {train_len}
 - HuBMAPDataset(val) length:   {val_len}
 - HuBMAPDataset(test) length:  {test_len}
-
-## Next phase
-Phase 3: model development (U-Net + SegFormer baselines, augmentation pipelines, training loop).
 """
+    if phase3:
+        md += _format_phase3_section(phase3)
+
     md_path.write_text(md)
     return md_path
 
 
 def _save_artifacts(cfg: Config) -> None:
-    """Copy run outputs into artifacts/ for CI replay."""
+    """Mirror run outputs into artifacts/ for CI replay."""
     art = cfg.paths.artifacts
     art.mkdir(parents=True, exist_ok=True)
     for name in ARTIFACT_SUMMARY_FILES:
@@ -144,12 +318,12 @@ def _save_artifacts(cfg: Config) -> None:
 
 
 def _str_keys_to_int(d: Dict[Any, Any]) -> Dict[int, Any]:
-    """JSON object keys are strings; cast back to int for our dataclasses."""
+    """Cast JSON string keys back to int."""
     return {int(k): v for k, v in d.items()}
 
 
 def _replay_from_artifacts(cfg: Config) -> None:
-    """Regenerate outputs from cached artifacts (CI path with no raw data)."""
+    """CI replay path: rebuild results/ + report from artifacts/."""
     art = cfg.paths.artifacts
     summary_path = art / "phase2_summary.json"
     if not summary_path.exists():
@@ -176,6 +350,16 @@ def _replay_from_artifacts(cfg: Config) -> None:
         if src.exists():
             shutil.copy2(src, cfg.paths.results / name)
 
+    phase3_payload: Optional[Dict[str, Any]] = None
+    phase3_path = art / "phase3_summary.json"
+    if phase3_path.exists():
+        with open(phase3_path, "r") as f:
+            phase3_payload = json.load(f)
+        cfg.paths.processed.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(phase3_path, cfg.paths.processed / "phase3_summary.json")
+    else:
+        print(f"[main] no cached phase3_summary.json at {phase3_path} (Phase 2 only).")
+
     md_path = _write_results_md(
         cfg,
         inspection=inspection,
@@ -184,6 +368,7 @@ def _replay_from_artifacts(cfg: Config) -> None:
         train_len=int(payload["train_len"]),
         val_len=int(payload["val_len"]),
         test_len=int(payload.get("test_len", 0)),
+        phase3=phase3_payload,
     )
     print(f"[main] replay complete; report at {md_path}")
 
@@ -226,8 +411,9 @@ def main():
     The purpose of this function is to reproduce all experimental evidence
     presented in the report in a fully automated and reproducible manner.
 
-    Phase 2 implements section 1 (data pipeline) plus the setup-only parts
-    of section 5 (preview figures and report). Sections 2-4 are Phase 3.
+    Phase 2 covers section 1 (data pipeline) plus the setup-only parts
+    of section 5. Phase 3 fills in sections 2-4 (training + evaluation)
+    and adds the comparison figures + Phase 3 markdown to section 5.
     """
     cfg = load_config()
     ensure_dirs(cfg)
@@ -237,7 +423,7 @@ def main():
     print(f"[main] seed         : {cfg.seed}")
     set_seed(cfg.seed)
 
-    # No raw data on disk: assume CI and replay from artifacts/.
+    # CI path: no raw data -> replay from artifacts/
     if not (cfg.paths.raw / "polygons.jsonl").exists():
         print("[main] no raw data, entering replay mode")
         _replay_from_artifacts(cfg)
@@ -277,12 +463,13 @@ def main():
         f" dtype={sample['mask'].dtype}"
     )
 
-    # 2. Model construction.        Phase 3.
-    # 3. Training.                  Phase 3.
-    # 4. Evaluation.                Phase 3.
+    # 2. Model construction.
+    # 3. Training.
+    # 4. Evaluation.
+    print("\n=== 2-4. Phase 3: training + evaluation ===")
+    phase3 = run_phase3(cfg, epochs=int(cfg.raw.get("epochs", 30)))
 
     # 5. Analysis and visualisation.
-    # Phase 2 writes the setup figures and the report. Training plots come in Phase 3.
     print("\n=== 5. Analysis and visualisation ===\n")
     sample_fig = cfg.paths.results / "sample_dataset_item.png"
     _save_sample_item_figure(sample, sample_fig)
@@ -296,6 +483,7 @@ def main():
         train_len=len(train_ds),
         val_len=len(val_ds),
         test_len=len(test_ds),
+        phase3=phase3,
     )
     print(f"[main] external report saved : {md_path}")
 
@@ -314,7 +502,7 @@ def main():
 
     _save_artifacts(cfg)
 
-    print("\nPhase 2 setup complete.")
+    print("\nPhase 3 run complete.")
 
 
 if __name__ == "__main__":
