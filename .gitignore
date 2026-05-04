@@ -135,7 +135,7 @@ dmypy.json
 .DS_Store
 
 # Project-specific
-data/
+/data/
 *.pth
 results/*
 !results/.gitkeep
