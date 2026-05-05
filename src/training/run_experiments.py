@@ -1,14 +1,24 @@
-"""Phase 3 runner: 3 aug arms x 1 model, paired stats, summary JSON.
+"""Phase 3 runner: 4 aug arms x 1 model, paired stats, summary JSON.
 
-Arms: rgb_aug (control), stain_aware_hed_only (ablation), stain_aware.
+Arms:
+    rgb_aug           control
+    hed_only          ablation: HED jitter on train, no Macenko
+    macenko_only      ablation: Macenko stain norm on train+eval, no HED
+    full_stain_aware  HED jitter on train + Macenko on eval (combined)
+
 Outputs land in `results/` plus `data/processed/phase3_summary.json`.
+
+If a per-tile JSON already exists at `results/{run_tag}_per_tile.json`
+the run is loaded from cache instead of re-trained, so we can add the
+new `macenko_only` arm without re-running the previous three.
 """
 
 from __future__ import annotations
 
 import copy
 import json
-from typing import Any, Dict, List, Tuple
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 import matplotlib
 
@@ -27,18 +37,21 @@ from src.utils.paths import Config
 
 _ARM_COLORS = {
     "rgb_aug": "#1f77b4",
-    "stain_aware_hed_only": "#2ca02c",
-    "stain_aware": "#ff7f0e",
+    "hed_only": "#2ca02c",
+    "macenko_only": "#d62728",
+    "full_stain_aware": "#ff7f0e",
 }
 _ARM_LABELS = {
     "rgb_aug": "rgb_aug (control)",
-    "stain_aware_hed_only": "stain_aware_hed_only (HED only)",
-    "stain_aware": "stain_aware (HED + Macenko)",
+    "hed_only": "hed_only (HED jitter)",
+    "macenko_only": "macenko_only (Macenko)",
+    "full_stain_aware": "full_stain_aware (HED + Macenko)",
 }
 _DEFAULT_ARMS: List[Tuple[str, str]] = [
     ("rgb_aug", "unet_resnet34_rgb_aug"),
-    ("stain_aware_hed_only", "unet_resnet34_stain_aware_hed_only"),
-    ("stain_aware", "unet_resnet34_stain_aware"),
+    ("hed_only", "unet_resnet34_hed_only"),
+    ("macenko_only", "unet_resnet34_macenko_only"),
+    ("full_stain_aware", "unet_resnet34_full_stain_aware"),
 ]
 
 
@@ -70,12 +83,76 @@ def _result_summary(name: str, model_name: str, aug_name: str, res: TrainResult)
     }
 
 
+def _load_cached_train_result(
+    cfg: Config,
+    run_tag: str,
+    model_name: str,
+    aug_name: str,
+) -> Optional[TrainResult]:
+    """Reconstruct a TrainResult from cached artifacts if both exist.
+
+    Reads per-tile dice from `results/{run_tag}_per_tile.json` and the
+    loss/Dice curves (if present) from a previous `phase3_summary.json`.
+    """
+    per_tile_path = cfg.paths.results / f"{run_tag}_per_tile.json"
+    if not per_tile_path.exists():
+        return None
+
+    with open(per_tile_path, "r") as f:
+        pt = json.load(f)
+
+    val_per_tile = np.asarray(pt.get("val_per_tile_dice", []), dtype=np.float64)
+    test_per_tile = np.asarray(pt.get("test_per_tile_dice", []), dtype=np.float64)
+    if val_per_tile.size == 0 and test_per_tile.size == 0:
+        return None
+
+    train_loss: List[float] = []
+    val_loss: List[float] = []
+    val_dice: List[float] = []
+    # legacy run-tag aliases so older summary JSONs still backfill the curves
+    legacy_aliases = {
+        "unet_resnet34_hed_only": "unet_resnet34_stain_aware_hed_only",
+        "unet_resnet34_full_stain_aware": "unet_resnet34_stain_aware",
+    }
+    summary_path = cfg.paths.processed / "phase3_summary.json"
+    if summary_path.exists():
+        try:
+            with open(summary_path, "r") as f:
+                prev = json.load(f)
+            runs_block = prev.get("runs") or {}
+            run = runs_block.get(run_tag) or runs_block.get(legacy_aliases.get(run_tag, ""), {})
+            train_loss = list(run.get("train_loss") or [])
+            val_loss = list(run.get("val_loss") or [])
+            val_dice = list(run.get("val_dice") or [])
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    weights_path = cfg.paths.results / "checkpoints" / f"{run_tag}.pth"
+    print(
+        f"[phase3] cache hit  {run_tag}: val_n={val_per_tile.size} "
+        f"test_n={test_per_tile.size} (skip training)"
+    )
+
+    return TrainResult(
+        train_loss=train_loss,
+        val_loss=val_loss,
+        val_dice=val_dice,
+        best_epoch=int(pt.get("best_epoch", 0)),
+        best_val_dice=float(pt.get("best_val_dice", float("nan"))),
+        per_tile_val_dice_at_best=val_per_tile,
+        per_tile_test_dice_at_best=test_per_tile,
+        weights_path=Path(weights_path),
+        val_tile_ids=list(pt.get("val_tile_ids", [])),
+        test_tile_ids=list(pt.get("test_tile_ids", [])),
+    )
+
+
 def _save_comparison_plot(
     val_arrays: Dict[str, np.ndarray],
     test_arrays: Dict[str, np.ndarray],
     out_path,
 ) -> None:
-    fig, axes = plt.subplots(1, 2, figsize=(12, 4.5), sharey=True)
+    fig, axes = plt.subplots(1, 2, figsize=(13, 4.8), sharey=True)
     bins = np.linspace(0.0, 1.0, 21)
 
     for ax, (arrs, title) in zip(
@@ -93,7 +170,7 @@ def _save_comparison_plot(
         ax.set_xlabel("per-tile Dice")
         ax.set_title(title)
         ax.grid(alpha=0.3)
-        ax.legend(loc="upper left", fontsize=8)
+        ax.legend(loc="upper right", fontsize=8)
 
     axes[0].set_ylabel("# tiles")
     fig.suptitle("Phase 3: per-tile Dice histogram by augmentation arm")
@@ -105,15 +182,13 @@ def _save_comparison_plot(
 def _wilcoxon_block(
     arms: Dict[str, np.ndarray],
 ) -> Dict[str, Dict[str, float]]:
-    """Three one-sided paired Wilcoxon tests on per-tile Dice."""
-    pairs = [
-        ("stain_aware", "rgb_aug"),
-        ("stain_aware_hed_only", "rgb_aug"),
-        ("stain_aware", "stain_aware_hed_only"),
-    ]
+    """One-sided paired Wilcoxon: every treatment arm vs rgb_aug control."""
+    base = "rgb_aug"
     out: Dict[str, Dict[str, float]] = {}
-    for treat, base in pairs:
-        if treat not in arms or base not in arms:
+    if base not in arms:
+        return out
+    for treat in ("hed_only", "macenko_only", "full_stain_aware"):
+        if treat not in arms:
             continue
         if arms[treat].shape != arms[base].shape:
             raise RuntimeError(
@@ -126,7 +201,7 @@ def _wilcoxon_block(
 
 
 def run_phase3(cfg: Config, epochs: int = 30) -> Dict[str, Any]:
-    """Train all 3 arms, compute CIs + pairwise Wilcoxon, write summary."""
+    """Train all 4 arms (cached arms reuse per_tile JSON), CIs + Wilcoxon."""
     epochs = int(epochs)
     model_name = "unet_resnet34"
 
@@ -134,6 +209,12 @@ def run_phase3(cfg: Config, epochs: int = 30) -> Dict[str, Any]:
     train_results: Dict[str, TrainResult] = {}
 
     for aug_name, run_tag in _DEFAULT_ARMS:
+        cached = _load_cached_train_result(cfg, run_tag, model_name, aug_name)
+        if cached is not None:
+            train_results[run_tag] = cached
+            runs[run_tag] = _result_summary(run_tag, model_name, aug_name, cached)
+            continue
+
         print(f"\n[phase3] === run {run_tag} (model={model_name} aug={aug_name}) ===")
         res = train_one_run(
             cfg,

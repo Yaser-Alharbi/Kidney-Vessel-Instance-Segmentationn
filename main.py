@@ -35,12 +35,15 @@ ARTIFACT_FIGURE_FILES = [
     "unet_resnet34_rgb_aug_loss.png",
     "unet_resnet34_rgb_aug_val_dice.png",
     "unet_resnet34_rgb_aug_predictions.png",
-    "unet_resnet34_stain_aware_hed_only_loss.png",
-    "unet_resnet34_stain_aware_hed_only_val_dice.png",
-    "unet_resnet34_stain_aware_hed_only_predictions.png",
-    "unet_resnet34_stain_aware_loss.png",
-    "unet_resnet34_stain_aware_val_dice.png",
-    "unet_resnet34_stain_aware_predictions.png",
+    "unet_resnet34_hed_only_loss.png",
+    "unet_resnet34_hed_only_val_dice.png",
+    "unet_resnet34_hed_only_predictions.png",
+    "unet_resnet34_macenko_only_loss.png",
+    "unet_resnet34_macenko_only_val_dice.png",
+    "unet_resnet34_macenko_only_predictions.png",
+    "unet_resnet34_full_stain_aware_loss.png",
+    "unet_resnet34_full_stain_aware_val_dice.png",
+    "unet_resnet34_full_stain_aware_predictions.png",
 ]
 
 
@@ -53,16 +56,17 @@ def _device_string(cfg: Config) -> str:
     return requested
 
 
-_PHASE3_ARMS = ("rgb_aug", "stain_aware_hed_only", "stain_aware")
+_PHASE3_ARMS = ("rgb_aug", "hed_only", "macenko_only", "full_stain_aware")
 _PHASE3_RUN_TAG_BY_ARM = {
     "rgb_aug": "unet_resnet34_rgb_aug",
-    "stain_aware_hed_only": "unet_resnet34_stain_aware_hed_only",
-    "stain_aware": "unet_resnet34_stain_aware",
+    "hed_only": "unet_resnet34_hed_only",
+    "macenko_only": "unet_resnet34_macenko_only",
+    "full_stain_aware": "unet_resnet34_full_stain_aware",
 }
 
 
 def _phase3_conclusion(stats: Dict[str, Any]) -> str:
-    """Build the conclusion paragraph from the stats block."""
+    """Build the conclusion paragraph from the stats block (4 arms)."""
     val_cis = stats.get("val", {}).get("cis", {}) or {}
     test_cis = stats.get("test", {}).get("cis", {}) or {}
     val_wc = stats.get("val", {}).get("wilcoxon", {}) or {}
@@ -75,47 +79,65 @@ def _phase3_conclusion(stats: Dict[str, Any]) -> str:
         return float(wc.get(k, {}).get("p", float("nan")))
 
     base_v = _mean(val_cis, "rgb_aug")
-    hed_v = _mean(val_cis, "stain_aware_hed_only")
-    full_v = _mean(val_cis, "stain_aware")
+    hed_v = _mean(val_cis, "hed_only")
+    mac_v = _mean(val_cis, "macenko_only")
+    full_v = _mean(val_cis, "full_stain_aware")
     base_t = _mean(test_cis, "rgb_aug")
-    full_t = _mean(test_cis, "stain_aware")
+    full_t = _mean(test_cis, "full_stain_aware")
 
-    p_full_vs_base_v = _p(val_wc, "stain_aware_gt_rgb_aug")
-    p_hed_vs_base_v = _p(val_wc, "stain_aware_hed_only_gt_rgb_aug")
-    p_full_vs_hed_v = _p(val_wc, "stain_aware_gt_stain_aware_hed_only")
-    p_full_vs_base_t = _p(test_wc, "stain_aware_gt_rgb_aug")
+    p_hed_v = _p(val_wc, "hed_only_gt_rgb_aug")
+    p_mac_v = _p(val_wc, "macenko_only_gt_rgb_aug")
+    p_full_v = _p(val_wc, "full_stain_aware_gt_rgb_aug")
+    p_full_t = _p(test_wc, "full_stain_aware_gt_rgb_aug")
 
-    full_dir_val = "improved" if full_v > base_v else "did not improve"
-    full_dir_test = "improved" if full_t > base_t else "did not improve"
-    full_signif_val = "significant" if p_full_vs_base_v < 0.05 else "not significant"
-    full_signif_test = "significant" if p_full_vs_base_t < 0.05 else "not significant"
+    means_v = {
+        "rgb_aug": base_v,
+        "hed_only": hed_v,
+        "macenko_only": mac_v,
+        "full_stain_aware": full_v,
+    }
+    finite = {k: v for k, v in means_v.items() if v == v}
+    winner = max(finite, key=finite.get) if finite else "rgb_aug"
 
-    if p_hed_vs_base_v < 0.05 and not p_full_vs_hed_v < 0.05:
-        ablation = (
-            "HED jitter alone explains most of the val gain over the RGB-aug "
-            "control; adding Macenko at eval gives no further significant lift."
-        )
-    elif p_full_vs_hed_v < 0.05:
-        ablation = (
-            "Macenko normalization adds a measurable lift on top of HED jitter "
-            "at eval (p = "
-            f"{p_full_vs_hed_v:.4g}), so both components contribute."
+    # quick "is the combined arm equal to the sum of its parts?" check.
+    # gain attributed to HED   = hed_v - base_v
+    # gain attributed to Mac   = mac_v - base_v
+    # observed combined gain   = full_v - base_v
+    gain_hed = hed_v - base_v
+    gain_mac = mac_v - base_v
+    gain_full = full_v - base_v
+    expected_sum = gain_hed + gain_mac
+    if abs(gain_full) < 1e-9 and abs(expected_sum) < 1e-9:
+        additivity = "Both single-component gains and the combined gain are ~0 on val."
+    elif expected_sum > 0 and gain_full >= 0.9 * expected_sum:
+        additivity = (
+            f"The combined arm's val gain ({gain_full:+.4f}) is roughly the sum "
+            f"of the HED ({gain_hed:+.4f}) and Macenko ({gain_mac:+.4f}) gains "
+            f"(~additive)."
         )
     else:
-        ablation = (
-            "Neither HED-only nor full stain-aware shows a significant edge "
-            "over RGB-aug on val with this single-WSI val set."
+        additivity = (
+            f"The combined arm's val gain ({gain_full:+.4f}) is not the sum of "
+            f"the HED ({gain_hed:+.4f}) and Macenko ({gain_mac:+.4f}) gains, so "
+            f"the components interact rather than just adding up."
         )
 
+    full_signif_val = "significant" if p_full_v < 0.05 else "not significant"
+    full_signif_test = "significant" if p_full_t < 0.05 else "not significant"
+    full_dir_test = "improved" if full_t > base_t else "did not improve"
+
     return (
-        f"Full stain-aware augmentation {full_dir_val} mean per-tile val Dice "
-        f"({full_v:.4f} vs rgb_aug {base_v:.4f}, p = {p_full_vs_base_v:.4g}, "
-        f"{full_signif_val} at alpha=0.05). HED-only sits at {hed_v:.4f} on val "
-        f"(p = {p_hed_vs_base_v:.4g} vs rgb_aug). {ablation} On the noisy test "
-        f"WSI the full arm {full_dir_test} ({full_t:.4f} vs {base_t:.4f}, "
-        f"p = {p_full_vs_base_t:.4g}, {full_signif_test}). Confidence is bounded "
-        "by the val set being a single WSI, so this run supports the hypothesis "
-        "at the strength of one paired comparison per pair."
+        f"On val, the best arm by mean per-tile Dice is **{winner}** "
+        f"(rgb_aug={base_v:.4f}, hed_only={hed_v:.4f}, "
+        f"macenko_only={mac_v:.4f}, full_stain_aware={full_v:.4f}). "
+        f"Paired Wilcoxon vs rgb_aug: hed_only p = {p_hed_v:.4g}, "
+        f"macenko_only p = {p_mac_v:.4g}, full_stain_aware p = {p_full_v:.4g} "
+        f"({full_signif_val} at alpha=0.05). {additivity} "
+        f"On the noisy test WSI the full arm {full_dir_test} "
+        f"({full_t:.4f} vs {base_t:.4f}, p = {p_full_t:.4g}, "
+        f"{full_signif_test}). Confidence is bounded by the val set being a "
+        f"single WSI, so this supports the hypothesis at the strength of one "
+        f"paired comparison per pair."
     )
 
 
@@ -141,9 +163,9 @@ def _format_phase3_section(phase3: Dict[str, Any]) -> str:
 
     def _wilcoxon_lines(wc: Dict[str, Any]) -> str:
         keys = [
-            ("stain_aware_gt_rgb_aug", "stain_aware > rgb_aug"),
-            ("stain_aware_hed_only_gt_rgb_aug", "stain_aware_hed_only > rgb_aug"),
-            ("stain_aware_gt_stain_aware_hed_only", "stain_aware > stain_aware_hed_only"),
+            ("hed_only_gt_rgb_aug", "hed_only > rgb_aug"),
+            ("macenko_only_gt_rgb_aug", "macenko_only > rgb_aug"),
+            ("full_stain_aware_gt_rgb_aug", "full_stain_aware > rgb_aug"),
         ]
         lines = []
         for k, label in keys:
@@ -176,7 +198,7 @@ def _format_phase3_section(phase3: Dict[str, Any]) -> str:
 
     return f"""
 
-## Phase 3: training and evaluation (three-arm ablation)
+## Phase 3: training and evaluation (four-arm ablation)
 
 ### Setup
 - Architecture: U-Net (ResNet-34 encoder, ImageNet pretrained)
@@ -184,21 +206,21 @@ def _format_phase3_section(phase3: Dict[str, Any]) -> str:
 - Optimizer: AdamW, lr={phase3.get('lr', 1e-4)}, weight_decay={phase3.get('weight_decay', 1e-4)}
 - Scheduler: CosineAnnealingLR
 - Epochs: {phase3.get('epochs', '?')}, batch: {phase3.get('batch_size', '?')}, image size: {phase3.get('image_size', '?')}, seed: {phase3.get('seed', '?')}
-- Arms: rgb_aug (control), stain_aware_hed_only (HED only), stain_aware (HED + Macenko)
+- Arms: rgb_aug (control), hed_only (HED jitter), macenko_only (Macenko stain norm), full_stain_aware (HED + Macenko)
 
 ### Best epoch per run
 {_best_lines()}
 
 ### Validation (dataset 1, clean labels)
-| Run                   | Mean Dice | 95% CI         |
-| --------------------- | --------- | -------------- |
+| Run                | Mean Dice | 95% CI         |
+| ------------------ | --------- | -------------- |
 {val_table}
 
 {_wilcoxon_lines(val_wc)}
 
 ### Test (dataset 2, NOISY labels)
-| Run                   | Mean Dice | 95% CI         |
-| --------------------- | --------- | -------------- |
+| Run                | Mean Dice | 95% CI         |
+| ------------------ | --------- | -------------- |
 {test_table}
 
 {_wilcoxon_lines(test_wc)}

@@ -26,9 +26,10 @@ from torch.utils.data import DataLoader
 
 from src.data.dataset import HuBMAPDataset
 from src.data.transforms import (
+    get_full_stain_aware_transforms,
+    get_hed_only_transforms,
+    get_macenko_only_transforms,
     get_rgb_aug_transforms,
-    get_stain_aware_hed_only_transforms,
-    get_stain_aware_transforms,
 )
 from src.models import build_model
 from src.training.evaluate import per_tile_dice
@@ -38,8 +39,12 @@ from src.utils.paths import Config
 
 _AUG_BUILDERS = {
     "rgb_aug": get_rgb_aug_transforms,
-    "stain_aware_hed_only": get_stain_aware_hed_only_transforms,
-    "stain_aware": get_stain_aware_transforms,
+    "hed_only": get_hed_only_transforms,
+    "macenko_only": get_macenko_only_transforms,
+    "full_stain_aware": get_full_stain_aware_transforms,
+    # legacy aliases (kept so older configs/checkpoints keep resolving)
+    "stain_aware_hed_only": get_hed_only_transforms,
+    "stain_aware": get_full_stain_aware_transforms,
 }
 
 

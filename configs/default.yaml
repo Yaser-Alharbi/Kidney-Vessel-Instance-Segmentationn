@@ -10,7 +10,7 @@ early_stop_patience: 8
 lr: 1.0e-4
 weight_decay: 1.0e-4
 models: ["unet_resnet34"]
-augs: ["rgb_aug", "stain_aware_hed_only", "stain_aware"]
+augs: ["rgb_aug", "hed_only", "macenko_only", "full_stain_aware"]
 n_pred_examples: 6
 
 paths:

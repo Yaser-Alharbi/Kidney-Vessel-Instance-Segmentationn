@@ -1,4 +1,4 @@
-"""Augmentation pipelines (RGB / HED-only / HED+Macenko).
+"""Augmentation pipelines (RGB / HED-only / Macenko-only / HED+Macenko).
 
 Each builder returns an Albumentations-shaped callable:
     transform(image=uint8_hwc, mask=uint8_hw)
@@ -175,7 +175,7 @@ def get_rgb_aug_transforms(image_size: int = 512, train: bool = True) -> _Masked
     return _MaskedCompose(A.Compose(ops))
 
 
-def get_stain_aware_hed_only_transforms(
+def get_hed_only_transforms(
     image_size: int = 512, train: bool = True
 ) -> _MaskedCompose:
     """Ablation: HED jitter on train, no Macenko on eval."""
@@ -196,10 +196,37 @@ def get_stain_aware_hed_only_transforms(
     return _MaskedCompose(A.Compose(ops))
 
 
-def get_stain_aware_transforms(
+def get_macenko_only_transforms(
     image_size: int = 512, train: bool = True
 ) -> _MaskedCompose:
-    """HED jitter on train + Macenko on eval."""
+    """Isolates Macenko: stain normalization on train + eval, no HED jitter.
+
+    Reuses the same fixed reference matrix as full_stain_aware via
+    `MacenkoNormalize` (defined above with `_MACENKO_REF_STAIN` /
+    `_MACENKO_REF_MAX_C`).
+    """
+    if train:
+        ops = [
+            A.HorizontalFlip(p=0.5),
+            A.VerticalFlip(p=0.5),
+            A.RandomRotate90(p=0.5),
+            MacenkoNormalize(p=1.0),
+            A.Normalize(mean=_IMAGENET_MEAN, std=_IMAGENET_STD),
+            ToTensorV2(),
+        ]
+    else:
+        ops = [
+            MacenkoNormalize(p=1.0),
+            A.Normalize(mean=_IMAGENET_MEAN, std=_IMAGENET_STD),
+            ToTensorV2(),
+        ]
+    return _MaskedCompose(A.Compose(ops))
+
+
+def get_full_stain_aware_transforms(
+    image_size: int = 512, train: bool = True
+) -> _MaskedCompose:
+    """HED jitter on train + Macenko on eval (combined arm)."""
     if train:
         ops = [
             A.HorizontalFlip(p=0.5),
@@ -216,3 +243,8 @@ def get_stain_aware_transforms(
             ToTensorV2(),
         ]
     return _MaskedCompose(A.Compose(ops))
+
+
+# back-compat aliases (older code paths used the longer names)
+get_stain_aware_hed_only_transforms = get_hed_only_transforms
+get_stain_aware_transforms = get_full_stain_aware_transforms
