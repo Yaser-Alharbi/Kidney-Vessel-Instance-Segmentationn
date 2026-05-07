@@ -1,0 +1,23 @@
+
+seed: 42
+image_size: 512
+batch_size: 16
+num_workers: 2
+device: mps
+
+epochs: 30
+early_stop_patience: 4
+lr: 1.0e-4
+weight_decay: 1.0e-4
+models: ["unet_resnet34"]
+augs: ["rgb_aug", "hed_only", "macenko_only", "full_stain_aware"]
+n_pred_examples: 6
+
+paths:
+  raw: data/raw
+  processed: data/processed
+  masks: data/processed/masks
+  splits: data/processed/splits.json
+  results: results
+  artifacts: artifacts
+  external_results_md: ~/Desktop/hubmap_phase3_results.md

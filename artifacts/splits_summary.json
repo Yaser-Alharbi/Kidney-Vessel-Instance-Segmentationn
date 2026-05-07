@@ -1,0 +1,21 @@
+{
+  "train_wsis": [
+    1
+  ],
+  "val_wsis": [
+    2
+  ],
+  "n_train_tiles": 270,
+  "n_val_tiles": 152,
+  "overlap_count": 0,
+  "n_noisy_train_tiles": 237,
+  "noisy_train_wsis": [
+    1
+  ],
+  "val_leak_excluded": 293,
+  "n_test_tiles": 410,
+  "test_wsis": [
+    3
+  ],
+  "test_strategy": "held-out dataset-2 WSI 3 (noisy labels, sort-first of [3, 4])"
+}
