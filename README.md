@@ -1,166 +1,93 @@
-# ELEC0135: Applied Machine Learning Systems II
+# HuBMAP Phase 3 — Stain Augmentation Ablation
 
-## Assignment
+ELEC0135 (AMLS II) coursework for the [HuBMAP — Hacking the Human Vasculature](https://www.kaggle.com/competitions/hubmap-hacking-the-human-vasculature) blood-vessel segmentation challenge.
 
-## 1. General Overview
+## Hypotheses
 
-This assignment requires the development of a complete machine learning system addressing a real-world research competition challenge in computer vision.
+Two hypotheses on HuBMAP Dataset 1 (n=2 WSIs):
 
-Each student must:
+1. HED-channel colour jitter at training improves Dice over RGB-only augmentation.
+2. Macenko stain normalization with an H&E-derived reference does not transfer to PAS and degrades performance.
 
-- Select one public-domain competition (Kaggle or TopCoder).
-- Develop and test a machine learning solution.
-- Propose and validate a clear research hypothesis.
-- Report findings in the format of a TMLR-style conference paper.
+The combined arm tests whether augmentation and normalization combine additively as Tellez et al. (2019) report for H&E.
 
-The project must demonstrate:
+## Method
 
-- Sound model design
-- Proper training/validation/testing methodology
-- Experimental analysis and ablation studies
-- Reproducibility
-- Balanced complexity vs performance trade-offs
+U-Net with ResNet-34 ImageNet encoder, four augmentation arms × three seeds (1, 2, 42):
 
-The goal is not to achieve leaderboard dominance, but to demonstrate strong reasoning, engineering design, and experimental validation.
+| Arm                | Train-time aug | Eval-time stain norm |
+| ------------------ | -------------- | -------------------- |
+| `rgb_aug`          | RGB jitter     | –                    |
+| `hed_only`         | HED jitter     | –                    |
+| `macenko_only`     | Macenko        | Macenko              |
+| `full_stain_aware` | HED jitter     | Macenko              |
 
----
+Reported with bootstrap 95% CIs and paired one-sided Wilcoxon tests.
 
-## 2. Challenge Selection
+## Quickstart
 
-You must select **one competition** from:
+```bash
+conda env create -f environment.yml
+conda activate amls2-final
+python main.py
+```
 
-- Kaggle (past 3 years recommended)  
-  https://www.kaggle.com/competitions  
+`main.py` is the single entry point. It runs deterministically across seeds 1, 2, and 42 (`torch.use_deterministic_algorithms(True, warn_only=True)`) and writes all figures, JSON summaries, and reports to disk without user input.
 
-- TopCoder challenges  
-  https://www.topcoder.com/challenges?bucket=allPast&tab=details  
+**Without raw data (autograder path).** If `data/raw/polygons.jsonl` is absent, `main.py` replays from cached `artifacts/` and rebuilds `results/` plus the markdown report. This is the GitHub Classroom autograder path on a fresh clone.
 
-### Allowed Task Types (Computer Vision Only)
+**With raw data.** Unzip the Kaggle data so:
 
-You must choose one of:
+```text
+data/raw/
+├── polygons.jsonl
+├── tile_meta.csv
+├── train/
+└── test/
+```
 
-- Image classification
-- Image segmentation
-- Image inpainting / super resolution
-- [Advanced] Conditional generation / multimodality
-- [Advanced] Image generation
+then `python main.py`. The full sweep (12 runs) completes in approximately 27 minutes on Apple Silicon (MPS) per `wall_time_seconds` in `phase3_summary.json`. Falls back to CPU.
 
-⚠ NLP-only competitions are not allowed.
+## Repository structure
 
-If selecting an **advanced generative project**, you must:
+```text
+.
+├── main.py                 # single entry point
+├── environment.yml         # conda env: amls2-final
+├── requirements.txt
+├── configs/default.yaml    # seeds, image size, epochs, paths, arms
+├── src/
+│   ├── data/               # masks, splits, datasets, augmentations
+│   ├── models/             # build_model() factory
+│   ├── training/           # train loop, evaluator, losses, runner
+│   └── utils/              # config, paths, deterministic seeding
+├── scripts/
+│   ├── learning_curves.py
+│   └── umap_activations.py
+├── data/                   # raw/ + processed/ (gitignored)
+├── results/                # per-run figures, JSONs (gitignored)
+├── artifacts/              # cached outputs (committed for replay)
+├── figures/                # report-ready PDFs
+└── docs/ASSIGNMENT.md
+```
 
-- Justify feasibility
-- Specify dataset size
-- Specify model size
-- Estimate compute requirements
-- Use compact models or parameter-efficient fine-tuning
-- Avoid training large-scale generative models from scratch
-- Get it approved by the team beforehand
+## Reproducibility
 
----
+- Single root entry point: `python main.py`.
+- Conda env at root: `environment.yml`.
+- Fixed seeds (1, 2, 42) + `torch.use_deterministic_algorithms(True, warn_only=True)` in `src/utils/seed.py`.
+- Plain Python only; no notebooks, no Makefile.
+- Plots written via matplotlib `Agg`.
+- Device auto-selection (MPS → CPU).
+- Cached `artifacts/` for autograder replay.
 
-## 3. Research Hypothesis
+## Outputs
 
-Your project must be structured around a clearly defined hypothesis, such as:
+- `results/phase3_comparison.png` — four-arm Dice comparison with CIs.
+- `results/unet_resnet34_<arm>_seed<seed>_{loss,val_dice,predictions}.png` — per-run curves and qualitative panels.
+- `data/processed/phase3_summary.json` — bootstrap CIs, Wilcoxon tests, config snapshot.
+- `~/Desktop/hubmap_phase3_results.md` — generated report (configurable).
 
-- Architectural comparison / Inductive bias comparison (e.g., CNNs vs ViT, Attention in Segmentation, etc.)
-- Training Strategies & Meta-Learning (e.g., transfer learning vs training from scratch, data augmentation, regularization, etc.)
-- Objective functions (e.g., auxiliary losses, various training losses, etc.)
-- Label smoothing
-- Class imbalance handling
-- Robustness to noise
-- Ensemble methods
+## Autograding
 
-Your experiments must test this hypothesis through empirical evaluation.
-
----
-
-## 4. Constraints
-
-- No paid services.
-- Use only free/public datasets and infrastructure.
-- No external database services.
-  - Spawn a local database if needed.
-  - If remote, it must remain accessible for 2 months after submission.
-- Plain Python only.
-- No notebooks.
-- No Makefiles.
-- Deterministic execution (fixed seeds).
-- No interactive input.
-- All plots saved to disk.
-- Training must be feasible on limited compute.
-
-### AI Usage Disclosure
-
-This assignment follows UCL Category 2 GenAI usage.
-
-- Undeclared GenAI use will be penalised.
-- Reports and code not using GenAI are rewarded.
-- If used, clearly disclose usage in the report.
-
----
-
-## 5. Deliverables
-
-### Report (80%)
-
-- Max 8 pages (excluding references + optional appendix).
-- Must use TMLR template (provided on Moodle).
-- Must be submitted in PDF format.
-- File naming format:
-
-  Report_AMLSII_25-26_SNXXXXXXXX.pdf
-
-- Include:
-  - Student number
-  - GitHub repo URL
-- Do NOT include your name.
-
-### Code (20%)
-
-The repository must:
-
-- Produce all experimental evidence presented in the report.
-- Contain a single entry point: `main.py` located in the root directory.
-- Execute the complete experimental workflow automatically when running:
-
-  ```bash
-  python main.py
-
-- Include `environment.yml` in root.
-- Be fully reproducible.
-- Require no manual intervention.
-
-Autograding will:
-
-1. Install `environment.yml`
-2. Run `python main.py`
-
-Any manual README instructions will be ignored.
-
----
-
-## 6. Marking Scheme
-
-### REPORT — 80%
-
-| Section | Weight |
-|----------|--------|
-| Abstract | 5% |
-| Introduction | 5% |
-| Literature Review | 10% |
-| Model Design & Methodology | 20% |
-| Implementation Details | 20% |
-| Experimental Results, Analysis & Conclusion | 20% |
-
-### CODE — 20%
-
-| Component | Weight |
-|------------|--------|
-| Reproducibility | 7% |
-| Code quality & documentation | 7% |
-| Code organisation | 2.5% |
-| Git & GitHub usage | 2.5% |
-
-Performance alone does not determine marks.  
-Clarity, reasoning, experimental validation, and engineering design matter most.
+See [`TUTORIAL_AUTOGRADING.md`](TUTORIAL_AUTOGRADING.md) for local autograder runs via fork. The graded workflow installs `environment.yml`, runs `pylint`, and executes `python main.py`.
