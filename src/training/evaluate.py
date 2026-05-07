@@ -41,6 +41,26 @@ def per_tile_dice(
     return (2.0 * inter + eps) / (denom + eps)
 
 
+def per_tile_iou(
+    pred: np.ndarray,
+    target: np.ndarray,
+    eps: float = 1e-7,
+) -> np.ndarray:
+    """Per-tile binary IoU = TP / (TP + FP + FN).
+
+    `pred` and `target` are binary [N, H, W] arrays already thresholded
+    at 0.5 on logits by the caller. Returns a 1-D float64 array of
+    length N in the same tile order as `per_tile_dice`.
+    """
+    if pred.shape != target.shape:
+        raise ValueError(f"shape mismatch: pred={pred.shape} target={target.shape}")
+    p = pred.astype(np.float64).reshape(pred.shape[0], -1)
+    t = target.astype(np.float64).reshape(target.shape[0], -1)
+    inter = (p * t).sum(axis=1)
+    union = p.sum(axis=1) + t.sum(axis=1) - inter
+    return (inter + eps) / (union + eps)
+
+
 def bootstrap_dice(
     per_tile: np.ndarray,
     n_boot: int = 2000,

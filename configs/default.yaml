@@ -6,7 +6,7 @@ num_workers: 2
 device: mps
 
 epochs: 30
-early_stop_patience: 8
+early_stop_patience: 4
 lr: 1.0e-4
 weight_decay: 1.0e-4
 models: ["unet_resnet34"]

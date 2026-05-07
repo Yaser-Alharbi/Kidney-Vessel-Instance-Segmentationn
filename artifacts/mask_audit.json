@@ -1,0 +1,81 @@
+{
+  "n_tiles_audited": 1633,
+  "coverage": {
+    "mean": 0.044988446489697353,
+    "median": 0.031536102294921875,
+    "std": 0.04859355287251204,
+    "min": 0.0,
+    "max": 0.5304298400878906,
+    "n_zero": 11,
+    "n_nonzero": 1622
+  },
+  "top_8": [
+    {
+      "tile_id": "556692ccbfb9",
+      "coverage": 0.5304298400878906
+    },
+    {
+      "tile_id": "be16177671b1",
+      "coverage": 0.4692535400390625
+    },
+    {
+      "tile_id": "7f3885828905",
+      "coverage": 0.4606475830078125
+    },
+    {
+      "tile_id": "a76c9a4f745c",
+      "coverage": 0.4317131042480469
+    },
+    {
+      "tile_id": "c864a708f66a",
+      "coverage": 0.3425140380859375
+    },
+    {
+      "tile_id": "8cb7d2ef7d2c",
+      "coverage": 0.325347900390625
+    },
+    {
+      "tile_id": "5ac2aabf1cda",
+      "coverage": 0.3170623779296875
+    },
+    {
+      "tile_id": "5ed62676da45",
+      "coverage": 0.30513763427734375
+    }
+  ],
+  "bottom_8_nonzero": [
+    {
+      "tile_id": "4abba3bf65bb",
+      "coverage": 0.001007080078125
+    },
+    {
+      "tile_id": "7632e7605ef9",
+      "coverage": 0.000965118408203125
+    },
+    {
+      "tile_id": "596a08cbd66b",
+      "coverage": 0.000934600830078125
+    },
+    {
+      "tile_id": "4aa434181421",
+      "coverage": 0.0008392333984375
+    },
+    {
+      "tile_id": "8a2b71c9531a",
+      "coverage": 0.000820159912109375
+    },
+    {
+      "tile_id": "e61a8801555f",
+      "coverage": 0.000606536865234375
+    },
+    {
+      "tile_id": "b3ee5e7bcf74",
+      "coverage": 0.00048828125
+    },
+    {
+      "tile_id": "c35d853b0cd2",
+      "coverage": 0.0004425048828125
+    }
+  ],
+  "csv_path": "/Users/yaseralharbi/Desktop/Masters/Sem 2/AMLS2/new-assignment-Yaser-Alharbi/data/processed/mask_coverage.csv"
+}

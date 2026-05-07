@@ -11,6 +11,7 @@ from typing import Any, Dict, Optional
 
 import torch
 
+from src.data.audit_masks import audit_coverage
 from src.data.build_masks import MaskBuildSummary, build_masks
 from src.data.dataset import HuBMAPDataset, _save_sample_item_figure
 from src.data.inspect_data import InspectionSummary, inspect_data
@@ -57,11 +58,14 @@ def _device_string(cfg: Config) -> str:
 
 
 _PHASE3_ARMS = ("rgb_aug", "hed_only", "macenko_only", "full_stain_aware")
+# Run-tags now carry an explicit seed suffix; seed-42 is the canonical
+# entry referenced by the markdown report (the new seeds are summarised
+# in the cross-seed block, not per-arm tables).
 _PHASE3_RUN_TAG_BY_ARM = {
-    "rgb_aug": "unet_resnet34_rgb_aug",
-    "hed_only": "unet_resnet34_hed_only",
-    "macenko_only": "unet_resnet34_macenko_only",
-    "full_stain_aware": "unet_resnet34_full_stain_aware",
+    "rgb_aug": "unet_resnet34_rgb_aug_seed42",
+    "hed_only": "unet_resnet34_hed_only_seed42",
+    "macenko_only": "unet_resnet34_macenko_only_seed42",
+    "full_stain_aware": "unet_resnet34_full_stain_aware_seed42",
 }
 
 
@@ -344,6 +348,50 @@ def _str_keys_to_int(d: Dict[Any, Any]) -> Dict[int, Any]:
     return {int(k): v for k, v in d.items()}
 
 
+def _run_mask_audit(cfg: Config) -> Dict[str, Any]:
+    """Invoke the existing mask coverage audit and persist a JSON summary."""
+    df = audit_coverage(cfg, top_k=8)
+    art = cfg.paths.artifacts / "mask_audit.json"
+    art.parent.mkdir(parents=True, exist_ok=True)
+    if df is None or df.empty:
+        payload: Dict[str, Any] = {
+            "n_tiles_audited": 0,
+            "coverage": {},
+            "csv_path": str(cfg.paths.processed / "mask_coverage.csv"),
+        }
+    else:
+        cov = df["coverage"]
+        payload = {
+            "n_tiles_audited": int(len(df)),
+            "coverage": {
+                "mean": float(cov.mean()),
+                "median": float(cov.median()),
+                "std": float(cov.std(ddof=0)),
+                "min": float(cov.min()),
+                "max": float(cov.max()),
+                "n_zero": int((cov == 0.0).sum()),
+                "n_nonzero": int((cov > 0.0).sum()),
+            },
+            "top_8": df.head(8).to_dict(orient="records"),
+            "bottom_8_nonzero": df[df["coverage"] > 0]
+                .tail(8)
+                .to_dict(orient="records"),
+            "csv_path": str(cfg.paths.processed / "mask_coverage.csv"),
+        }
+    with open(art, "w") as f:
+        json.dump(payload, f, indent=2)
+    cov = payload.get("coverage", {})
+    print(
+        f"[mask-audit] tiles={payload['n_tiles_audited']}  "
+        f"mean_cov={cov.get('mean', float('nan')):.4f}  "
+        f"median={cov.get('median', float('nan')):.4f}  "
+        f"max={cov.get('max', float('nan')):.4f}  "
+        f"zero_cov={cov.get('n_zero', 0)}  "
+        f"json={art}"
+    )
+    return payload
+
+
 def _replay_from_artifacts(cfg: Config) -> None:
     """CI replay path: rebuild results/ + report from artifacts/."""
     art = cfg.paths.artifacts
@@ -459,6 +507,9 @@ def main():
     print("\n[1b] build blood-vessel masks")
     masks = build_masks(cfg)
 
+    print("\n[1b-audit] mask coverage audit")
+    _run_mask_audit(cfg)
+
     print("\n[1c] build WSI-grouped splits")
     splits = build_splits(cfg)
 
@@ -521,6 +572,14 @@ def main():
     with open(summary_path, "w") as f:
         json.dump(payload, f, indent=2)
     print(f"[main] phase2 summary json   : {summary_path}")
+
+    print("\n=== 6. UMAP of penultimate activations ===\n")
+    try:
+        from scripts.umap_activations import main as run_umap
+
+        run_umap()
+    except Exception as exc:
+        print(f"[main] UMAP step failed (non-fatal): {exc}")
 
     _save_artifacts(cfg)
 

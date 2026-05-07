@@ -32,7 +32,7 @@ from src.data.transforms import (
     get_rgb_aug_transforms,
 )
 from src.models import build_model
-from src.training.evaluate import per_tile_dice
+from src.training.evaluate import per_tile_dice, per_tile_iou
 from src.training.losses import DiceBCELoss
 from src.utils.paths import Config
 
@@ -60,6 +60,13 @@ class TrainResult:
     weights_path: Path
     val_tile_ids: List[str] = field(default_factory=list)
     test_tile_ids: List[str] = field(default_factory=list)
+    # IoU at threshold 0.5; same length and order as per-tile Dice.
+    per_tile_val_iou_at_best: np.ndarray = field(
+        default_factory=lambda: np.array([], dtype=np.float64)
+    )
+    per_tile_test_iou_at_best: np.ndarray = field(
+        default_factory=lambda: np.array([], dtype=np.float64)
+    )
 
 
 def _resolve_device(cfg: Config) -> torch.device:
@@ -104,16 +111,17 @@ def _make_loader(
 
 
 @torch.no_grad()
-def _eval_loss_and_dice(
+def _eval_loss_and_metrics(
     model: torch.nn.Module,
     loader: DataLoader,
     criterion: torch.nn.Module,
     device: torch.device,
-) -> tuple[float, np.ndarray, List[str]]:
-    """Mean loss + per-tile Dice over a loader. Leaves model in eval()."""
+) -> tuple[float, np.ndarray, np.ndarray, List[str]]:
+    """Mean loss + per-tile (Dice, IoU) over a loader. Leaves model in eval()."""
     model.eval()
     losses: List[float] = []
     dice_chunks: List[np.ndarray] = []
+    iou_chunks: List[np.ndarray] = []
     ids: List[str] = []
     for batch in loader:
         image = batch["image"].to(device, non_blocking=False).float()
@@ -126,6 +134,7 @@ def _eval_loss_and_dice(
         pred = (torch.sigmoid(logits) > 0.5).squeeze(1).to("cpu").numpy().astype(np.uint8)
         gt = mask.to("cpu").numpy().astype(np.uint8)
         dice_chunks.append(per_tile_dice(pred, gt))
+        iou_chunks.append(per_tile_iou(pred, gt))
 
         bids = batch.get("tile_id", [])
         if isinstance(bids, (list, tuple)):
@@ -134,8 +143,24 @@ def _eval_loss_and_dice(
             ids.extend([str(t) for t in bids])
 
     mean_loss = float(np.mean(losses)) if losses else float("nan")
-    per_tile = np.concatenate(dice_chunks) if dice_chunks else np.array([], dtype=np.float64)
-    return mean_loss, per_tile, ids
+    per_tile_d = (
+        np.concatenate(dice_chunks) if dice_chunks else np.array([], dtype=np.float64)
+    )
+    per_tile_i = (
+        np.concatenate(iou_chunks) if iou_chunks else np.array([], dtype=np.float64)
+    )
+    return mean_loss, per_tile_d, per_tile_i, ids
+
+
+def _eval_loss_and_dice(
+    model: torch.nn.Module,
+    loader: DataLoader,
+    criterion: torch.nn.Module,
+    device: torch.device,
+) -> tuple[float, np.ndarray, List[str]]:
+    """Back-compat shim returning only (loss, per-tile Dice, ids)."""
+    loss, dice, _iou, ids = _eval_loss_and_metrics(model, loader, criterion, device)
+    return loss, dice, ids
 
 
 def _save_loss_curve(
@@ -369,12 +394,18 @@ def train_one_run(
     torch.save(best_state, weights_path)
     model.load_state_dict(best_state)
 
-    _, val_per_tile, val_ids = _eval_loss_and_dice(model, val_loader, criterion, device)
-    _, test_per_tile, test_ids = _eval_loss_and_dice(model, test_loader, criterion, device)
+    _, val_per_tile, val_per_tile_iou, val_ids = _eval_loss_and_metrics(
+        model, val_loader, criterion, device
+    )
+    _, test_per_tile, test_per_tile_iou, test_ids = _eval_loss_and_metrics(
+        model, test_loader, criterion, device
+    )
     print(
         f"[train:{run_tag}] best epoch {best_epoch}"
         f"  val_dice={float(val_per_tile.mean()):.4f}"
         f"  test_dice={float(test_per_tile.mean()):.4f}"
+        f"  val_iou={float(val_per_tile_iou.mean()):.4f}"
+        f"  test_iou={float(test_per_tile_iou.mean()):.4f}"
     )
 
     loss_png = cfg.paths.results / f"{run_tag}_loss.png"
@@ -400,8 +431,10 @@ def train_one_run(
                 "best_val_dice": float(best_val_dice),
                 "val_tile_ids": val_ids,
                 "val_per_tile_dice": val_per_tile.tolist(),
+                "val_per_tile_iou": val_per_tile_iou.tolist(),
                 "test_tile_ids": test_ids,
                 "test_per_tile_dice": test_per_tile.tolist(),
+                "test_per_tile_iou": test_per_tile_iou.tolist(),
             },
             f,
             indent=2,
@@ -418,4 +451,6 @@ def train_one_run(
         weights_path=weights_path,
         val_tile_ids=val_ids,
         test_tile_ids=test_ids,
+        per_tile_val_iou_at_best=val_per_tile_iou,
+        per_tile_test_iou_at_best=test_per_tile_iou,
     )
