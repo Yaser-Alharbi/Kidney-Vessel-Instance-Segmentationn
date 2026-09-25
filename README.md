@@ -1,6 +1,6 @@
 # HuBMAP Phase 3 — Stain Augmentation Ablation
 
-ELEC0135 (AMLS II) coursework for the [HuBMAP — Hacking the Human Vasculature](https://www.kaggle.com/competitions/hubmap-hacking-the-human-vasculature) blood-vessel segmentation challenge.
+[HuBMAP — Hacking the Human Vasculature](https://www.kaggle.com/competitions/hubmap-hacking-the-human-vasculature) blood-vessel segmentation challenge.
 
 ## Hypotheses
 
