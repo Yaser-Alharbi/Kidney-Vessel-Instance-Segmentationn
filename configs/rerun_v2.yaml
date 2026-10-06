@@ -1,0 +1,38 @@
+
+# Rerun v2: RTX 4080 (CUDA), 20 seeds, test = both held-out dataset-2 WSIs.
+# Every training hyperparameter below is identical to configs/default.yaml;
+# only device, seeds, test_wsis, the wall budget and the output paths differ.
+seed: 42
+image_size: 512
+batch_size: 16
+num_workers: 2
+device: cuda
+
+epochs: 30
+early_stop_patience: 4
+lr: 1.0e-4
+weight_decay: 1.0e-4
+models: ["unet_resnet34"]
+augs: ["rgb_aug", "hed_only", "macenko_only", "full_stain_aware"]
+n_pred_examples: 6
+
+# 20 seeds x 4 arms = 80 runs. The first three match the v1 sweep.
+seeds: [42, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+
+# Both held-out dataset-2 WSIs (v1 used WSI 3 only, 410 tiles).
+# WSI 4 adds 271 tiles for 681 total. Neither appears in train or val,
+# which build_splits validates rather than assumes.
+test_wsis: [3, 4]
+
+# Ceiling, not an estimate. v1's 3h default would silently shelve runs
+# into summary["pending"] long before 80 runs finish.
+max_wall_hours: 24
+
+paths:
+  raw: data/raw
+  processed: data/processed_v2
+  masks: data/processed/masks
+  splits: data/processed_v2/splits.json
+  results: results_v2
+  artifacts: artifacts_v2
+  external_results_md: ~/Desktop/hubmap_phase3_results_v2.md

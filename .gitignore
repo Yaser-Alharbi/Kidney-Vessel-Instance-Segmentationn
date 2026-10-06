@@ -138,5 +138,6 @@ dmypy.json
 /data/
 *.pth
 results/*
+results_v2/*
 !results/.gitkeep
 

@@ -1,4 +1,4 @@
-"""Phase 3 runner: 4 aug arms x 3 seeds, paired stats, summary JSON.
+"""Phase 3 runner: 4 aug arms x N seeds, paired stats, summary JSON.
 
 Arms (control + 3 stain-aware variants):
     rgb_aug           control
@@ -6,7 +6,8 @@ Arms (control + 3 stain-aware variants):
     macenko_only      ablation: Macenko stain norm on train+eval, no HED
     full_stain_aware  HED jitter on train + Macenko on eval (combined)
 
-Seeds: [42, 1, 2]. Outer loop is seeds, inner loop is arms.
+Seeds default to [42, 1, 2]; the caller may pass any list (the v2
+rerun passes 20 from config). Outer loop is seeds, inner is arms.
 
 Caching:
     For any (seed, arm) pair, the run is loaded from cached artifacts
@@ -376,10 +377,11 @@ def _wilcoxon_per_tile(
 def _wilcoxon_cross_seed(
     per_seed_means: Dict[str, Dict[int, float]], seeds: List[int]
 ) -> Dict[str, Dict[str, Any]]:
-    """n=3 paired Wilcoxon on per-seed means, treatment vs rgb_aug.
+    """Paired Wilcoxon on per-seed means, treatment vs rgb_aug.
 
-    With n=3 the smallest two-sided p is 0.25 (so any p < 0.25 is
-    not actually achievable); reported anyway for completeness.
+    n is the number of seeds. For n < 6 the smallest achievable
+    two-sided p is 2**-(n-1) (0.25 at n=3), so with few seeds a small
+    p can be the floor of the test rather than evidence.
     """
     from scipy.stats import wilcoxon
 
@@ -763,7 +765,10 @@ def _print_phase3_outputs(
         print(f"  {arm:<18s} {_fmt(vd)} {_fmt(td)} {_fmt(vi)} {_fmt(ti)}")
 
     # 4) cross-seed Wilcoxon
-    print("\n[phase3] cross-seed Wilcoxon (n=3 paired) treatment > rgb_aug:")
+    print(
+        f"\n[phase3] cross-seed Wilcoxon (n={len(seeds_list)} paired) "
+        "treatment > rgb_aug:"
+    )
     for split_name in ("val", "test"):
         block = stats.get(split_name, {}).get("wilcoxon_cross_seed", {})
         for metric in ("dice", "iou"):

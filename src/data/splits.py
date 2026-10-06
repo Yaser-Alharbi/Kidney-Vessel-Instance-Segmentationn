@@ -1,8 +1,9 @@
 """Build a deterministic, WSI-grouped train/val/test split.
 
 Train and val come from dataset 1 (clean labels), one WSI each.
-Test is a held-out WSI from dataset 2 (noisy labels), giving a
-cross-WSI evaluation set without sharing stain with train or val.
+Test is one or more held-out WSIs from dataset 2 (noisy labels),
+giving a cross-WSI evaluation set without sharing stain with train
+or val. Set `test_wsis` in the config to use more than one.
 """
 
 from __future__ import annotations
@@ -60,7 +61,8 @@ def build_splits(cfg: Config) -> SplitSummary:
     train_ids = sorted(df1[df1["source_wsi"].isin(train_wsis)]["id"].tolist())
     val_ids = sorted(df1[df1["source_wsi"].isin(val_wsis)]["id"].tolist())
 
-    # Test = first dataset-2 WSI that is not already in train or val.
+    # Test = held-out dataset-2 WSI(s): `test_wsis` from config if given,
+    # else the sort-first WSI not already in train or val.
     df2 = df[df["dataset"] == 2].copy()
     n_d2_total = int(len(df2))
     d2_wsis = sorted(df2["source_wsi"].unique().tolist())
@@ -70,13 +72,28 @@ def build_splits(cfg: Config) -> SplitSummary:
             f"No dataset-2 WSI available for test (all dataset-2 WSIs {d2_wsis} "
             f"overlap train {train_wsis} or val {val_wsis})."
         )
-    test_wsi = held_out[0]
-    test_wsis = [test_wsi]
-    test_ids = sorted(df2[df2["source_wsi"] == test_wsi]["id"].tolist())
-    test_strategy = (
-        f"held-out dataset-2 WSI {test_wsi} (noisy labels, "
-        f"sort-first of {held_out})"
-    )
+    requested = cfg.raw.get("test_wsis")
+    if requested:
+        test_wsis = sorted(int(w) for w in requested)
+        not_held_out = [w for w in test_wsis if w not in held_out]
+        if not_held_out:
+            raise RuntimeError(
+                f"Configured test_wsis {test_wsis} include {not_held_out}, which are "
+                f"not available as held-out dataset-2 WSIs (held_out={held_out}, "
+                f"dataset-2 WSIs={d2_wsis}, train={train_wsis}, val={val_wsis}). "
+                "A test WSI must be in dataset 2 and in neither train nor val."
+            )
+        test_strategy = (
+            f"held-out dataset-2 WSIs {test_wsis} (noisy labels, "
+            f"configured via test_wsis, of available {held_out})"
+        )
+    else:
+        test_wsis = [held_out[0]]
+        test_strategy = (
+            f"held-out dataset-2 WSI {test_wsis[0]} (noisy labels, "
+            f"sort-first of {held_out})"
+        )
+    test_ids = sorted(df2[df2["source_wsi"].isin(test_wsis)]["id"].tolist())
 
     overlap_train_val = set(train_ids) & set(val_ids)
     overlap_train_test = set(train_ids) & set(test_ids)

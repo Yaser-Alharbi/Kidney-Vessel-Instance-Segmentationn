@@ -1,0 +1,33 @@
+
+# Pilot for rerun v2: seed 42 only (4 runs), to confirm the GPU is used
+# and to time a run before committing to the full 80-run sweep.
+#
+# Identical to configs/rerun_v2.yaml except `seeds`, and it shares every
+# path with it, so these 4 runs are cached and skipped by the full sweep
+# rather than being recomputed.
+seed: 42
+image_size: 512
+batch_size: 16
+num_workers: 2
+device: cuda
+
+epochs: 30
+early_stop_patience: 4
+lr: 1.0e-4
+weight_decay: 1.0e-4
+models: ["unet_resnet34"]
+augs: ["rgb_aug", "hed_only", "macenko_only", "full_stain_aware"]
+n_pred_examples: 6
+
+seeds: [42]
+test_wsis: [3, 4]
+max_wall_hours: 24
+
+paths:
+  raw: data/raw
+  processed: data/processed_v2
+  masks: data/processed/masks
+  splits: data/processed_v2/splits.json
+  results: results_v2
+  artifacts: artifacts_v2
+  external_results_md: ~/Desktop/hubmap_phase3_results_v2.md
