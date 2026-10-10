@@ -1,6 +1,8 @@
-# HuBMAP Phase 3 — Stain Augmentation Ablation
+# HuBMAP Phase 3 Stain Augmentation Ablation
 
 [HuBMAP — Hacking the Human Vasculature](https://www.kaggle.com/competitions/hubmap-hacking-the-human-vasculature) blood-vessel segmentation challenge.
+
+**Vessel Stain Lab**: [vessel-stain-lab.streamlit.app](https://vessel-stain-lab.streamlit.app/) 
 
 ## Hypotheses
 
