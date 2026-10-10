@@ -1,0 +1,603 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Blood Vessel Segmentation in Kidney Histology</title>
+  <meta name="description" content="Teaching AI to Find Blood Vessels in Kidney Tissue: a U-Net study of stain augmentation for blood-vessel segmentation in kidney histology.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Source+Serif+4:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/vega@6.3.1"></script>
+  <script src="https://cdn.jsdelivr.net/npm/vega-lite@6.4.1"></script>
+  <script src="https://cdn.jsdelivr.net/npm/vega-embed@7.2.0"></script>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="#top">Blood Vessel Segmentation in Kidney Histology</a>
+    <div class="nav-links">
+      <a href="#problem">Problem</a>
+      <a href="#data">Data</a>
+      <a href="#experiment">Experiment</a>
+      <a href="#methods">Methods</a>
+      <a href="#results">Results</a>
+      <a href="#limits">Limitations</a>
+      <a class="cta" href="https://kidney-blood-vessel-segmentation.streamlit.app/">Live lab &rarr;</a>
+    </div>
+  </div>
+</nav>
+
+<!-- ================================================================ hero -->
+<section class="hero" id="top">
+  <div class="wrap">
+    <p class="eyebrow">Deep learning &middot; Kidney histology &middot; Stain robustness</p>
+    <h1>Teaching AI to Find Blood Vessels in Kidney Tissue</h1>
+    <p class="subtitle">...even when the stain colour changes from lab to lab</p>
+    <p class="lead">
+      Pathology labs stain tissue slightly differently, and a model trained on one lab's colours
+      can stumble on another's. I trained the same <dfn class="term" data-term="unet" tabindex="0">U-Net</dfn> 4 ways,
+      changing only how it handles stain colour, and repeated each recipe with 20
+      different random <dfn class="term" data-term="seed" tabindex="0">seeds</dfn>. Randomly varying the stain during training
+      gave the most accurate vessel outlines on slides the model had never seen.
+    </p>
+    <div class="buttons">
+      <a class="btn primary" href="#problem">Read the story</a>
+      <a class="btn" href="https://kidney-blood-vessel-segmentation.streamlit.app/">Open the live lab</a>
+      <a class="btn" href="https://github.com/Yaser-Alharbi/kidney-blood-vessel-segmentation">Source code</a>
+    </div>
+
+    <div class="figrow three">
+      <figure><img src="img/hero_tile.webp" alt="Kidney tissue tile stained with PAS" width="512" height="512">
+        <figcaption><strong>Input.</strong> A 512 &times; 512 pixel tile of kidney tissue.</figcaption></figure>
+      <figure><img src="img/hero_gt.webp" alt="The same tile with expert-labelled blood vessels in green" width="512" height="512">
+        <figcaption><strong>Expert outline.</strong> Blood vessels marked by expert annotators (green).</figcaption></figure>
+      <figure><img src="img/hero_pred.webp" alt="The same tile with the stain-jitter model's prediction in blue" width="512" height="512">
+        <figcaption><strong>Model output.</strong> What the stain-jitter model marks as vessel.</figcaption></figure>
+    </div>
+    <p class="fig-note">Selected example: a validation tile chosen because stain jitter helps a lot on it. Typical tiles are harder; see the results below.</p>
+
+    <div class="stats">
+      <div class="stat">
+        <div class="value">0.204 <span class="vs">vs 0.179</span></div>
+        <div class="label">Test <dfn class="term" data-term="dice" tabindex="0">Dice</dfn>, stain jitter vs baseline</div>
+        <p class="note">Average over 20 training runs per recipe. Dice measures overlap with the labelled vessels; higher is better.</p>
+      </div>
+      <div class="stat">
+        <div class="value">80</div>
+        <div class="label">Training runs</div>
+        <p class="note">4 recipes &times; 20 seeds, identical except for how stain colour is handled.</p>
+      </div>
+      <div class="stat">
+        <div class="value">681</div>
+        <div class="label">Test tiles from 2 unseen slides</div>
+        <p class="note">Labels on these slides are auto-generated and noisy, so the scores compare recipes with each other, not absolute accuracy.</p>
+      </div>
+      <div class="stat">
+        <div class="value">p = 0.0021</div>
+        <div class="label">Paired one-sided <dfn class="term" data-term="wilcoxon" tabindex="0">Wilcoxon</dfn> across runs</div>
+        <p class="note">How likely a win this consistent would be if stain jitter made no real difference.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================= problem -->
+<section id="problem">
+  <div class="wrap">
+    <p class="eyebrow">The problem</p>
+    <h2>Same tissue, different colours</h2>
+    <div class="text">
+      <p>
+        Kidney biopsies are cut into thin slices and stained so that structures show up under a
+        microscope. The tissue here uses <strong>PAS</strong> (periodic acid&ndash;Schiff) with a
+        haematoxylin counterstain: purple-blue for cell nuclei, magenta-pink for membranes and
+        connective tissue. Finding the blood vessels is a step towards mapping the kidney's
+        vasculature, which the HuBMAP project is building a reference atlas of.
+      </p>
+      <p>
+        The catch is that stain colour is not standardised. Stain batch, staining time, slice
+        thickness and scanner all shift the colours, so the same structure can look noticeably
+        different from one lab, or one slide, to the next. A model that has only seen one colour
+        profile tends to learn the colours instead of the shapes, and loses accuracy on new
+        slides. This study tests four ways of dealing with that.
+      </p>
+    </div>
+    <div class="figrow three">
+      <figure><img src="img/stain_0.webp" alt="Tile re-stained at strength 0.7" loading="lazy" width="384" height="384">
+        <figcaption>Stain strength &times;0.7</figcaption></figure>
+      <figure><img src="img/stain_1.webp" alt="Tile re-stained at strength 1" loading="lazy" width="384" height="384">
+        <figcaption>Stain strength &times;1 (as scanned)</figcaption></figure>
+      <figure><img src="img/stain_2.webp" alt="Tile re-stained at strength 1.3" loading="lazy" width="384" height="384">
+        <figcaption>Stain strength &times;1.3</figcaption></figure>
+    </div>
+    <p class="fig-note">The showcase tile with both stains scaled in <dfn class="term" data-term="od" tabindex="0">optical-density</dfn> space, the same operation stain jitter uses during training. A real lab-to-lab shift looks much like this.</p>
+
+    <details>
+      <summary>How can a computer separate the two stains?</summary>
+      <div class="body">
+        <p>
+          Each stain absorbs light in its own characteristic way. Converting RGB to optical
+          density (how much light is absorbed) makes the stains add up linearly, and a fixed
+          stain matrix (Ruifrok &amp; Johnston, 2001) then splits every pixel into a
+          haematoxylin amount (H), an eosin-like amount (E) and a third residual channel. This
+          is called <dfn class="term" data-term="deconv" tabindex="0">colour deconvolution</dfn>. Both stain-aware recipes below
+          work in this space.
+        </p>
+        <div class="figrow three">
+          <figure><img src="img/channel_h.webp" alt="Haematoxylin channel" loading="lazy" width="384" height="384"><figcaption><strong>H channel.</strong> Mostly nuclei.</figcaption></figure>
+          <figure><img src="img/channel_e.webp" alt="Eosin-like channel" loading="lazy" width="384" height="384"><figcaption><strong>E channel.</strong> Membranes and stroma.</figcaption></figure>
+          <figure><img src="img/macenko.webp" alt="Macenko-normalised tile" loading="lazy" width="384" height="384"><figcaption><strong>Macenko-normalised.</strong> Recoloured to the fixed reference stain.</figcaption></figure>
+        </div>
+        <p class="small muted">Code: <a href="https://github.com/Yaser-Alharbi/kidney-blood-vessel-segmentation/blob/main/src/data/transforms.py#L25">HED matrix</a> &middot; <a href="https://github.com/Yaser-Alharbi/kidney-blood-vessel-segmentation/blob/main/src/data/transforms.py#L111">Macenko normalisation</a></p>
+      </div>
+    </details>
+  </div>
+</section>
+
+<!-- ================================================================ data -->
+<section id="data">
+  <div class="wrap">
+    <p class="eyebrow">The data</p>
+    <h2>Slides, tiles and an honest split</h2>
+    <div class="text">
+      <p>
+        The data comes from the HuBMAP <em>Hacking the Human Vasculature</em> Kaggle challenge:
+        whole-slide images (<dfn class="term" data-term="wsi" tabindex="0">WSIs</dfn>) of human kidney cut into
+        512 &times; 512 <dfn class="term" data-term="tile" tabindex="0">tiles</dfn>.
+        1,633 tiles carry polygon annotations, with
+        16,054 blood-vessel outlines in total.
+        Only blood vessels are used here; glomeruli and &ldquo;unsure&rdquo; regions are ignored.
+      </p>
+      <p>
+        Vessels are small: on average they cover 4.5% of a tile (median
+        3.2%). That imbalance shapes the loss function and the metric.
+      </p>
+    </div>
+
+    <svg class="diagram" viewBox="0 0 1120 210" role="img" aria-label="Train, validation and test split by slide">
+      <rect x="0" y="10" width="350" height="180" rx="8" fill="#151a21" stroke="#262d37"/>
+      <rect x="0" y="10" width="4" height="180" fill="#5b93ef"/>
+      <text x="26" y="46" class="lbl">TRAIN</text>
+      <text x="26" y="92" class="big">270 tiles</text>
+      <text x="26" y="124">from 1 slide</text>
+      <text x="26" y="152" class="lbl">expert labels</text>
+      <rect x="380" y="10" width="350" height="180" rx="8" fill="#151a21" stroke="#262d37"/>
+      <rect x="380" y="10" width="4" height="180" fill="#8ab4f8"/>
+      <text x="406" y="46" class="lbl">VALIDATION</text>
+      <text x="406" y="92" class="big">152 tiles</text>
+      <text x="406" y="124">from 1 slide</text>
+      <text x="406" y="152" class="lbl">expert labels</text>
+      <rect x="760" y="10" width="350" height="180" rx="8" fill="#151a21" stroke="#262d37"/>
+      <rect x="760" y="10" width="4" height="180" fill="#d6a03c"/>
+      <text x="786" y="46" class="lbl">TEST</text>
+      <text x="786" y="92" class="big">681 tiles</text>
+      <text x="786" y="124">from 2 slides</text>
+      <text x="786" y="152" class="lbl">auto-generated labels</text>
+    </svg>
+
+    <div class="text">
+      <p>
+        <strong>Why split by slide, not by tile?</strong> Tiles from one slide share its stain
+        and its patient. If tiles from the same slide sat in both training and test, the model
+        could score well by recognising the slide, which says nothing about new slides. Every
+        split here uses different slides, and the split code checks they never overlap. The test
+        slides come from a different part of the dataset whose labels were generated
+        automatically, so they are noisier than the expert labels.
+      </p>
+    </div>
+
+    <div class="callout">
+      <h3>Why the scores look low</h3>
+      <p>
+        A Dice around 0.204 sounds poor, but three things push it down, and
+        none of them changes which recipe wins. The training set is 270
+        tiles from 1 slide. Vessels are thin and small, and Dice is
+        harsh on small objects: missing a vessel's edge by a few pixels costs a large share of
+        it. And the test labels are auto-generated, so some &ldquo;misses&rdquo; are label
+        errors. The study is built to compare recipes against each other under identical
+        conditions, not to chase a leaderboard score.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ========================================================== experiment -->
+<section id="experiment">
+  <div class="wrap">
+    <p class="eyebrow">The experiment</p>
+    <h2>Four recipes, one variable</h2>
+    <div class="text">
+      <p>
+        Every model is the same network with the same settings and the same data. The only
+        thing that changes is what happens to the colours, during training and at test time.
+        Each card shows the same tile passed through that recipe's training pipeline, so you
+        can see what the model actually learns from.
+      </p>
+    </div>
+    <div class="cards two">
+      <div class="card">
+        <h3><span class="dot" style="background:#a09cad"></span>Baseline</h3>
+        <div class="id">rgb_aug</div>
+        <p>Flips, rotations and brightness/contrast tweaks. The standard recipe the others are compared against.</p>
+        <dl class="kv">
+          <dt>Training</dt><dd>flips + rot90 + brightness/contrast</dd>
+          <dt>Test time</dt><dd>plain</dd>
+        </dl>
+        <div class="thumbs">
+          <img src="img/train_rgb_aug_0.webp" alt="Baseline training sample" loading="lazy" width="256" height="256">
+          <img src="img/train_rgb_aug_1.webp" alt="Baseline training sample" loading="lazy" width="256" height="256">
+          <img src="img/train_rgb_aug_2.webp" alt="Baseline training sample" loading="lazy" width="256" height="256">
+        </div>
+        <p class="role"><strong>Why it is here.</strong> The control. Standard geometric and brightness augmentation, no stain handling, so every other recipe is measured against it.</p>
+      </div>
+      <div class="card">
+        <h3><span class="dot" style="background:#5b93ef"></span>Stain jitter</h3>
+        <div class="id">hed_only</div>
+        <p>Randomly varies the strength of the purple and pink stains while training, so the model sees many lab colours.</p>
+        <dl class="kv">
+          <dt>Training</dt><dd>flips + rot90 + HEDJitter(sigma=0.05)</dd>
+          <dt>Test time</dt><dd>plain</dd>
+        </dl>
+        <div class="thumbs">
+          <img src="img/train_hed_only_0.webp" alt="Stain jitter training sample" loading="lazy" width="256" height="256">
+          <img src="img/train_hed_only_1.webp" alt="Stain jitter training sample" loading="lazy" width="256" height="256">
+          <img src="img/train_hed_only_2.webp" alt="Stain jitter training sample" loading="lazy" width="256" height="256">
+        </div>
+        <p class="role"><strong>Why it is here.</strong> First hypothesis. If the model sees many stain strengths in training, it should cope better with slides it has never seen.</p>
+      </div>
+      <div class="card">
+        <h3><span class="dot" style="background:#d6a03c"></span>Stain normalisation</h3>
+        <div class="id">macenko_only</div>
+        <p>Recolours every tile to one fixed reference stain, in training and at test time.</p>
+        <dl class="kv">
+          <dt>Training</dt><dd>flips + rot90 + MacenkoNormalize</dd>
+          <dt>Test time</dt><dd>MacenkoNormalize</dd>
+        </dl>
+        <div class="thumbs">
+          <img src="img/train_macenko_only_0.webp" alt="Stain normalisation training sample" loading="lazy" width="256" height="256">
+          <img src="img/train_macenko_only_1.webp" alt="Stain normalisation training sample" loading="lazy" width="256" height="256">
+          <img src="img/train_macenko_only_2.webp" alt="Stain normalisation training sample" loading="lazy" width="256" height="256">
+        </div>
+        <p class="fig-note" style="margin-top:10px"> These samples are the same tile, only flipped or rotated, yet they come out in clearly different colours. That is real pipeline output, not a display error.
+          Flipping or rotating only moves pixels, so the normalised colours should not change. Yet for 6 of the 8 orientations of this tile, the normalisation picks the stain colours differently from the unrotated tile. The model therefore sees inconsistent colours during training, which may be part of why this recipe scores lower. This was not tested directly.
+        </p>
+        <p class="role"><strong>Why it is here.</strong> Second hypothesis. Recolouring everything to one reference removes colour differences, but the reference was designed for H&E, not the PAS stain used here.</p>
+      </div>
+      <div class="card">
+        <h3><span class="dot" style="background:#de6b93"></span>Jitter + normalisation</h3>
+        <div class="id">full_stain_aware</div>
+        <p>Stain jitter while training, then recolours to the reference stain at test time.</p>
+        <dl class="kv">
+          <dt>Training</dt><dd>flips + rot90 + HEDJitter(sigma=0.05)</dd>
+          <dt>Test time</dt><dd>MacenkoNormalize</dd>
+        </dl>
+        <div class="thumbs">
+          <img src="img/train_full_stain_aware_0.webp" alt="Jitter + normalisation training sample" loading="lazy" width="256" height="256">
+          <img src="img/train_full_stain_aware_1.webp" alt="Jitter + normalisation training sample" loading="lazy" width="256" height="256">
+          <img src="img/train_full_stain_aware_2.webp" alt="Jitter + normalisation training sample" loading="lazy" width="256" height="256">
+        </div>
+        <p class="role"><strong>Why it is here.</strong> The additivity test. Tellez et al. (2019) found augmentation and normalisation add up on H&E. Does that hold on PAS?</p>
+      </div>
+    </div>
+
+    <h3 style="margin-top:56px">Training setup, and why</h3>
+    <ul class="reasons">
+      <li><span class="what">U-Net with a ResNet-34 encoder</span>
+        <span class="why">The standard architecture for medical segmentation. The encoder starts from ImageNet weights, which helps with only 270 training tiles.</span></li>
+      <li><span class="what"><dfn class="term" data-term="loss" tabindex="0">Dice + BCE loss</dfn></span>
+        <span class="why">Vessels are a small share of pixels, so plain per-pixel loss would reward predicting &ldquo;no vessel&rdquo;. The Dice term matches the evaluation metric; the BCE term keeps gradients smooth early in training. <a href="https://github.com/Yaser-Alharbi/kidney-blood-vessel-segmentation/blob/main/src/training/losses.py#L19">Code</a></span></li>
+      <li><span class="what">AdamW, learning rate 0.0001, weight decay 0.0001, cosine schedule</span>
+        <span class="why">A conventional, well-behaved setup for fine-tuning a pretrained encoder; the learning rate decays smoothly to zero. <a href="https://github.com/Yaser-Alharbi/kidney-blood-vessel-segmentation/blob/main/src/training/train.py#L327">Code</a></span></li>
+      <li><span class="what">Up to 30 epochs, early stop after 4</span>
+        <span class="why">Training stops once validation Dice has not improved for 4 epochs, and the best epoch's weights are kept. This limits overfitting on a small training set.</span></li>
+      <li><span class="what">Batch 16, tiles 512 &times; 512</span>
+        <span class="why">Full tiles at native resolution, so thin vessels are not blurred away by resizing.</span></li>
+      <li><span class="what">20 <dfn class="term" data-term="seed" tabindex="0">seeds</dfn> per recipe</span>
+        <span class="why">For statistical power. The comparison uses a paired test across runs, and with only 3 runs per recipe the smallest p it can ever produce is 0.125, even if one recipe wins every time. With 20 runs that floor drops to 9.5e-07. In the results, the run-to-run spread of the baseline (std 0.024 on test) turned out to be about as large as the gap between recipes (+0.025), so a single run could easily have pointed the wrong way.</span></li>
+    </ul>
+    <p class="small muted">All 80 runs took 2.8 hours of GPU time in total.</p>
+  </div>
+</section>
+
+<!-- ============================================================= methods -->
+<section id="methods">
+  <div class="wrap">
+    <p class="eyebrow">How it works</p>
+    <h2>The algorithms, briefly</h2>
+    <div class="pipeline">
+      <div class="step"><b>Tile</b>512 &times; 512 RGB</div><div class="arrow">&rarr;</div>
+      <div class="step"><b>Colour step</b>depends on the recipe</div><div class="arrow">&rarr;</div>
+      <div class="step"><b>U-Net</b>one score per pixel</div><div class="arrow">&rarr;</div>
+      <div class="step"><b>Threshold</b>sigmoid &gt; 0.5</div><div class="arrow">&rarr;</div>
+      <div class="step"><b>Vessel mask</b>compared with the label</div>
+    </div>
+
+    <div class="cards two">
+      <div class="card">
+        <h3>Stain jitter (HED jitter)</h3>
+        <p>Randomly makes each stain a little stronger or weaker for every training tile, so the model never sees exactly the same colours twice.</p>
+        <details><summary>How it works</summary><div class="body">
+          <p>The tile is converted to optical density and split into H, E and residual channels by colour deconvolution. Each channel is multiplied by a random factor in 1 &plusmn; &sigma; and shifted by a random offset in &plusmn;&sigma;, then converted back to RGB. With &sigma; = 0.05, applied to 80.0% of training tiles.</p>
+        </div></details>
+        <details><summary>Details</summary><div class="body">
+          <p class="small">Matrix: Ruifrok &amp; Johnston (2001). <a href="https://github.com/Yaser-Alharbi/kidney-blood-vessel-segmentation/blob/main/src/data/transforms.py#L59">HEDJitter</a> &middot; <a href="https://github.com/Yaser-Alharbi/kidney-blood-vessel-segmentation/blob/main/src/data/transforms.py#L214">where the recipe sets &sigma; and p</a></p>
+        </div></details>
+      </div>
+      <div class="card">
+        <h3>Stain normalisation (Macenko)</h3>
+        <p>Estimates each tile's own two stain colours, then repaints the tile as if it had been stained with one fixed reference.</p>
+        <details><summary>How it works</summary><div class="body">
+          <p>Background pixels are dropped and the rest are converted to optical density. The two main directions of variation (from an SVD) span a plane; the extreme angles in that plane give the tile's two stain vectors. Concentrations are rescaled so their upper percentile matches the reference, then recombined with the reference stain matrix. Degenerate tiles are returned unchanged.</p>
+        </div></details>
+        <details><summary>Details</summary><div class="body">
+          <p class="small">Method: Macenko et al. (2009). The reference stain matrix comes from H&amp;E, which is exactly what the second hypothesis questions for PAS. <a href="https://github.com/Yaser-Alharbi/kidney-blood-vessel-segmentation/blob/main/src/data/transforms.py#L111">MacenkoNormalize</a></p>
+        </div></details>
+      </div>
+      <div class="card">
+        <h3>U-Net with a ResNet-34 encoder</h3>
+        <p>An encoder shrinks the tile into increasingly abstract features; a decoder expands them back to full resolution to label every pixel.</p>
+        <details><summary>How it works</summary><div class="body">
+          <svg class="diagram" viewBox="0 0 520 200" role="img" aria-label="U-Net diagram">
+            <rect x="20" y="20" width="44" height="150" rx="4" fill="#1b212a" stroke="#5b93ef"/>
+            <rect x="456" y="20" width="44" height="150" rx="4" fill="#1b212a" stroke="#8ab4f8"/><line x1="64" y1="32" x2="456" y2="32" stroke="#3a424d" stroke-dasharray="4 4"/>
+            <rect x="80" y="56" width="44" height="114" rx="4" fill="#1b212a" stroke="#5b93ef"/>
+            <rect x="396" y="56" width="44" height="114" rx="4" fill="#1b212a" stroke="#8ab4f8"/><line x1="124" y1="68" x2="396" y2="68" stroke="#3a424d" stroke-dasharray="4 4"/>
+            <rect x="140" y="92" width="44" height="78" rx="4" fill="#1b212a" stroke="#5b93ef"/>
+            <rect x="336" y="92" width="44" height="78" rx="4" fill="#1b212a" stroke="#8ab4f8"/><line x1="184" y1="104" x2="336" y2="104" stroke="#3a424d" stroke-dasharray="4 4"/>
+            <rect x="200" y="128" width="44" height="42" rx="4" fill="#1b212a" stroke="#5b93ef"/>
+            <rect x="276" y="128" width="44" height="42" rx="4" fill="#1b212a" stroke="#8ab4f8"/>
+            <text x="20" y="196" class="lbl">encoder (ResNet-34)</text>
+            <text x="390" y="196" class="lbl">decoder</text>
+            <text x="190" y="26" class="lbl">skip connections</text>
+          </svg>
+          <p>Skip connections carry fine detail from the encoder straight to the decoder, which matters for thin structures like vessels. The output is one score per pixel; a sigmoid above 0.5 means &ldquo;vessel&rdquo;.</p>
+        </div></details>
+        <details><summary>Details</summary><div class="body"><p class="small">segmentation-models-pytorch <code>Unet(resnet34)</code>, ImageNet weights, single output channel. <a href="https://github.com/Yaser-Alharbi/kidney-blood-vessel-segmentation/blob/main/src/models/__init__.py#L16">Code</a></p></div></details>
+      </div>
+      <div class="card">
+        <h3>Bootstrap CI and Wilcoxon test</h3>
+        <p>Two ways of asking whether a difference between recipes is real or just luck.</p>
+        <details><summary>How it works</summary><div class="body">
+          <p><strong><dfn class="term" data-term="bootstrap" tabindex="0">Bootstrap</dfn>:</strong> resample the scores with replacement 2,000 times and take the middle 95% of the resampled means as a <dfn class="term" data-term="ci" tabindex="0">confidence interval</dfn>.</p>
+          <p><strong>Wilcoxon signed-rank:</strong> pair each stain-jitter run with the baseline run that used the same seed, then ask whether the differences lean positive. It is <em>paired</em> because both runs share the same random start, <em>non-parametric</em> because Dice is not normally distributed, and <em>one-sided</em> because each hypothesis predicts a direction.</p>
+        </div></details>
+        <details><summary>Details</summary><div class="body"><p class="small"><a href="https://github.com/Yaser-Alharbi/kidney-blood-vessel-segmentation/blob/main/src/training/evaluate.py#L64">bootstrap_dice</a> &middot; <a href="https://github.com/Yaser-Alharbi/kidney-blood-vessel-segmentation/blob/main/src/training/evaluate.py#L90">paired_wilcoxon_dice</a> (scipy)</p></div></details>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================= results -->
+<section id="results">
+  <div class="wrap">
+    <p class="eyebrow">Results</p>
+    <h2>What the 80 runs say</h2>
+    <p class="text">All headline numbers below are <strong>across runs</strong>: each recipe's mean Dice over its 20 training runs, tested with a paired one-sided Wilcoxon across those runs.</p>
+
+        <div class="cards three">
+      <div class="card verdict">
+        <span class="tag yes">Supported</span>
+        <h3>Stain jitter helps</h3>
+        <div class="big">0.204 <span class="muted" style="font-size:16px">vs 0.179</span></div>
+        <p>Test Dice rises by +13.8% over the baseline (p = 0.0021). Stain jitter beat the baseline in 16 of 20 same-seed pairs. Validation agrees: 0.231 vs 0.213, p = 0.020.</p>
+      </div>
+      <div class="card verdict">
+        <span class="tag yes">Supported by the means</span>
+        <h3>Macenko hurts on PAS</h3>
+        <div class="big">0.141 <span class="muted" style="font-size:16px">vs 0.179</span></div>
+        <p>Normalising to an H&amp;E reference lowers test Dice by -21.6%, and validation Dice too (0.196 vs 0.213). The planned test only asked whether it <em>improves</em> on the baseline; it does not (p = 1.00).</p>
+      </div>
+      <div class="card verdict">
+        <span class="tag no">Not supported</span>
+        <h3>The two do not add up</h3>
+        <div class="big">0.089</div>
+        <p>Combining jitter and normalisation scores below both single recipes. Adding the two separate gains predicts -0.014; the combination actually gets -0.090. One plausible factor: this recipe sees Macenko-normalised colours only at test time, never in training. The study did not test that directly.</p>
+      </div>
+    </div>
+
+    <div class="chart-wrap">
+      <h3>Every run, on the test slides</h3>
+      <div class="chart" data-spec="seeds_test"></div>
+      <p class="how"><strong>How to read this.</strong> Each dot is one training run's mean Dice over the 681 test tiles. The grey bar is the 95% bootstrap confidence interval of the recipe's mean across its 20 runs, and the tick is the mean. Dots spreading out means the result depends on the random seed; clusters that do not overlap mean a reliable difference.</p>
+    </div>
+    <details><summary>Same chart on the validation slide (expert labels)</summary><div class="body">
+      <div class="chart" data-spec="seeds_val"></div>
+      <p class="small muted">The validation slide is also used to pick each run's best epoch, so its scores lean slightly optimistic. The test slides are the honest comparison.</p>
+    </div></details>
+
+    <h3 style="margin-top:56px">The showcase tile, through each model</h3>
+    <p class="small muted">
+      <span class="swatch" style="background:#19a974"></span>found correctly
+      <span class="swatch" style="background:#e2483d"></span>marked, but not a vessel
+      <span class="swatch" style="background:#3fa7ff"></span>vessel the model missed
+    </p>
+    <div class="figrow four">
+      <figure><img src="img/pred_rgb_aug.webp" alt="Baseline prediction with errors coloured" loading="lazy" width="384" height="384">
+        <figcaption><span class="dot" style="background:#a09cad"></span><strong>Baseline</strong> &middot; Dice 0.309</figcaption></figure>
+      <figure><img src="img/pred_hed_only.webp" alt="Stain jitter prediction with errors coloured" loading="lazy" width="384" height="384">
+        <figcaption><span class="dot" style="background:#5b93ef"></span><strong>Stain jitter</strong> &middot; Dice 0.366</figcaption></figure>
+      <figure><img src="img/pred_macenko_only.webp" alt="Stain normalisation prediction with errors coloured" loading="lazy" width="384" height="384">
+        <figcaption><span class="dot" style="background:#d6a03c"></span><strong>Stain normalisation</strong> &middot; Dice 0.235</figcaption></figure>
+      <figure><img src="img/pred_full_stain_aware.webp" alt="Jitter + normalisation prediction with errors coloured" loading="lazy" width="384" height="384">
+        <figcaption><span class="dot" style="background:#de6b93"></span><strong>Jitter + normalisation</strong> &middot; Dice 0.088</figcaption></figure>
+    </div>
+    <p class="fig-note">One run (seed 42), one selected tile. Illustrative only; the chart above is the evidence.</p>
+
+    <div class="chart-wrap">
+      <h3>Stress test: turning the stain up and down</h3>
+      <div class="chart" data-spec="sweep_h_scale"></div>
+      <p class="how"><strong>How to read this.</strong> The showcase tile is re-stained at each strength and every seed-42 model predicts again. The shaded band (0.95 to 1.05) is the range stain jitter covered in training; beyond it, every model is extrapolating. One tile, so this is an illustration. Try other tiles in the <a href="https://kidney-blood-vessel-segmentation.streamlit.app/">live lab</a>.</p>
+    </div>
+    <details><summary>Same sweep for the pink (eosin) stain</summary><div class="body"><div class="chart" data-spec="sweep_e_scale"></div></div></details>
+
+    <details>
+      <summary>Full results table (across runs)</summary>
+      <div class="body table-wrap">
+        <p style="margin-top:12px"><strong>Test slides</strong></p>
+        <table>
+          <thead><tr><th>Recipe</th><th class="num">Mean Dice &plusmn; std</th><th class="num">95% CI of mean</th><th class="num">vs baseline</th><th class="num">Wins</th><th class="num">p (one-sided)</th><th class="num">Mean IoU</th></tr></thead>
+          <tbody>
+            <tr><td><span class="dot" style="background:#a09cad"></span>Baseline</td>
+              <td class="num">0.179 &plusmn; 0.024</td>
+              <td class="num">0.168 &ndash; 0.189</td>
+              <td class="num">&mdash;</td>
+              <td class="num">&mdash;</td>
+              <td class="num">&mdash;</td>
+              <td class="num">0.106</td></tr>
+            <tr><td><span class="dot" style="background:#5b93ef"></span>Stain jitter</td>
+              <td class="num">0.204 &plusmn; 0.022</td>
+              <td class="num">0.195 &ndash; 0.214</td>
+              <td class="num">+13.8%</td>
+              <td class="num">16 / 20</td>
+              <td class="num">0.0021</td>
+              <td class="num">0.123</td></tr>
+            <tr><td><span class="dot" style="background:#d6a03c"></span>Stain normalisation</td>
+              <td class="num">0.141 &plusmn; 0.022</td>
+              <td class="num">0.130 &ndash; 0.150</td>
+              <td class="num">-21.6%</td>
+              <td class="num">1 / 20</td>
+              <td class="num">1.00</td>
+              <td class="num">0.083</td></tr>
+            <tr><td><span class="dot" style="background:#de6b93"></span>Jitter + normalisation</td>
+              <td class="num">0.089 &plusmn; 0.008</td>
+              <td class="num">0.086 &ndash; 0.093</td>
+              <td class="num">-50.2%</td>
+              <td class="num">0 / 20</td>
+              <td class="num">1.00</td>
+              <td class="num">0.049</td></tr>
+          </tbody>
+        </table>
+        <p style="margin-top:12px"><strong>Validation slide</strong></p>
+        <table>
+          <thead><tr><th>Recipe</th><th class="num">Mean Dice &plusmn; std</th><th class="num">95% CI of mean</th><th class="num">vs baseline</th><th class="num">Wins</th><th class="num">p (one-sided)</th><th class="num">Mean IoU</th></tr></thead>
+          <tbody>
+            <tr><td><span class="dot" style="background:#a09cad"></span>Baseline</td>
+              <td class="num">0.213 &plusmn; 0.027</td>
+              <td class="num">0.201 &ndash; 0.225</td>
+              <td class="num">&mdash;</td>
+              <td class="num">&mdash;</td>
+              <td class="num">&mdash;</td>
+              <td class="num">0.133</td></tr>
+            <tr><td><span class="dot" style="background:#5b93ef"></span>Stain jitter</td>
+              <td class="num">0.231 &plusmn; 0.013</td>
+              <td class="num">0.226 &ndash; 0.236</td>
+              <td class="num">+8.3%</td>
+              <td class="num">12 / 20</td>
+              <td class="num">0.020</td>
+              <td class="num">0.144</td></tr>
+            <tr><td><span class="dot" style="background:#d6a03c"></span>Stain normalisation</td>
+              <td class="num">0.196 &plusmn; 0.020</td>
+              <td class="num">0.186 &ndash; 0.204</td>
+              <td class="num">-8.2%</td>
+              <td class="num">7 / 20</td>
+              <td class="num">0.99</td>
+              <td class="num">0.119</td></tr>
+            <tr><td><span class="dot" style="background:#de6b93"></span>Jitter + normalisation</td>
+              <td class="num">0.146 &plusmn; 0.011</td>
+              <td class="num">0.142 &ndash; 0.151</td>
+              <td class="num">-31.4%</td>
+              <td class="num">0 / 20</td>
+              <td class="num">1.00</td>
+              <td class="num">0.082</td></tr>
+          </tbody>
+        </table>
+        <p class="small muted">Mean and std over 20 runs. CI: bootstrap (2,000 resamples) over the 20 run means. Wins: same-seed pairs where the recipe beat the baseline. <dfn class="term" data-term="iou" tabindex="0">IoU</dfn> is a stricter overlap score than Dice and ranks the recipes the same way.</p>
+      </div>
+    </details>
+    <details>
+      <summary>Per-tile statistics for a single run (seed 42)</summary>
+      <div class="body table-wrap">
+        <table>
+          <thead><tr><th>Recipe</th><th class="num">Test mean Dice</th><th class="num">95% CI over tiles</th><th class="num">p per tile</th></tr></thead>
+          <tbody>
+            <tr><td><span class="dot" style="background:#a09cad"></span>Baseline</td><td class="num">0.167</td>
+              <td class="num">0.158 &ndash; 0.175</td>
+              <td class="num">&mdash;</td></tr>
+            <tr><td><span class="dot" style="background:#5b93ef"></span>Stain jitter</td><td class="num">0.199</td>
+              <td class="num">0.187 &ndash; 0.210</td>
+              <td class="num">7.0e-22</td></tr>
+            <tr><td><span class="dot" style="background:#d6a03c"></span>Stain normalisation</td><td class="num">0.108</td>
+              <td class="num">0.101 &ndash; 0.115</td>
+              <td class="num">1.00</td></tr>
+            <tr><td><span class="dot" style="background:#de6b93"></span>Jitter + normalisation</td><td class="num">0.086</td>
+              <td class="num">0.080 &ndash; 0.092</td>
+              <td class="num">1.00</td></tr>
+          </tbody>
+        </table>
+        <p class="small muted">Here the bootstrap and the Wilcoxon run over the 681 test tiles of one run. That p looks far stronger (7.0e-22 for stain jitter) because it treats every tile as independent evidence, but tiles from the same slides are not independent and it is still a single training run. That is why the across-run test above is the headline.</p>
+      </div>
+    </details>
+  </div>
+</section>
+
+<!-- ================================================================ lab -->
+<section id="lab">
+  <div class="wrap">
+    <p class="eyebrow">Try it yourself</p>
+    <h2>The live lab</h2>
+    <p class="text">The four seed-42 models run live in a small web app. It is free-hosted, so if nobody has used it for a while it may ask you to wake it up first.</p>
+    <div class="cards three">
+      <div class="card"><h3>Tile explorer</h3><p>Pick a tile by what it shows (where stain jitter helps most, hardest tiles, and so on) and compare all four predictions side by side, with mistakes coloured.</p></div>
+      <div class="card"><h3>Stain stress test</h3><p>Turn the purple and pink stains up or down on any tile and watch each model react, with a live run log.</p></div>
+      <div class="card"><h3>Your own image</h3><p>Upload a tissue tile and run all four models on it. Nothing is stored.</p></div>
+    </div>
+    <div class="buttons"><a class="btn primary" href="https://kidney-blood-vessel-segmentation.streamlit.app/">Open the live lab &rarr;</a></div>
+  </div>
+</section>
+
+<!-- ============================================================= limits -->
+<section id="limits">
+  <div class="wrap">
+    <p class="eyebrow">Limitations and next steps</p>
+    <h2>What this does not show</h2>
+    <ol class="limits">
+      <li><strong>Noisy test labels.</strong> The test slides have auto-generated labels. They are fine for ranking recipes, but the absolute scores understate true accuracy.</li>
+      <li><strong>One training slide.</strong> All 270 training tiles come from 1 slide. More slides, and more labs, would test the stain question far harder.</li>
+      <li><strong>Validation picks the best epoch.</strong> Validation scores are therefore slightly optimistic; the test slides give the honest comparison.</li>
+      <li><strong>The stress test uses one tile.</strong> It illustrates the behaviour; the across-run statistics are the evidence.</li>
+      <li><strong>The Macenko reference was not fitted to PAS.</strong> A PAS-specific reference might change the second result. That is the natural next experiment, along with training the combined recipe on normalised colours so train and test match.</li>
+    </ol>
+  </div>
+</section>
+
+<!-- ============================================================ glossary -->
+<section id="glossary">
+  <div class="wrap">
+    <p class="eyebrow">Glossary</p>
+    <h2>Terms used on this page</h2>
+    <dl class="glossary">
+      <dt data-key="dice">Dice score</dt><dd>Overlap between the predicted vessels and the labelled vessels: twice the shared area divided by the total area of both. It runs from zero (no overlap) to one (perfect match).</dd>
+      <dt data-key="iou">IoU</dt><dd>Intersection over union: the shared area divided by the area covered by either. Stricter than Dice, and always lower for the same prediction.</dd>
+      <dt data-key="unet">U-Net</dt><dd>A neural network for image segmentation. It compresses the image into features, then expands them back to label every pixel, with shortcuts that keep fine detail.</dd>
+      <dt data-key="seed">Seed</dt><dd>The number that fixes all the randomness in a training run (initial weights, data order, augmentation). Different seeds give slightly different models from identical settings.</dd>
+      <dt data-key="wilcoxon">Wilcoxon signed-rank test</dt><dd>A test on paired differences that does not assume a normal distribution. Here it pairs runs that share a seed and asks whether one recipe is consistently better.</dd>
+      <dt data-key="pvalue">p-value</dt><dd>How likely a result at least this consistent would be if there were no real difference. Small values mean luck is an unlikely explanation.</dd>
+      <dt data-key="ci">Confidence interval</dt><dd>A range that plausibly contains the true mean, given the spread of the data.</dd>
+      <dt data-key="bootstrap">Bootstrap</dt><dd>Estimating uncertainty by resampling the observed data many times with replacement and seeing how much the result moves.</dd>
+      <dt data-key="wsi">WSI</dt><dd>Whole-slide image: a scan of an entire microscope slide, often tens of thousands of pixels across.</dd>
+      <dt data-key="tile">Tile</dt><dd>A small square crop of a whole-slide image, the unit the model sees.</dd>
+      <dt data-key="od">Optical density</dt><dd>How much light the tissue absorbs at each pixel. Stains add up linearly in this space, which makes separating them possible.</dd>
+      <dt data-key="deconv">Colour deconvolution</dt><dd>Splitting each pixel's colour into the amount of each stain, using the known colour of each stain.</dd>
+      <dt data-key="loss">Loss function</dt><dd>The quantity training tries to minimise. Dice loss rewards overlap directly; BCE (binary cross-entropy) scores each pixel separately.</dd>
+    </dl>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span>Blood Vessel Segmentation in Kidney Histology. Data: HuBMAP <em>Hacking the Human Vasculature</em> (Kaggle).</span>
+    <span><a href="https://github.com/Yaser-Alharbi/kidney-blood-vessel-segmentation">Source code</a> &middot; <a href="https://huggingface.co/Yaser-Alharbi/vessel-stain-lab-weights">Model weights</a> &middot; <a href="https://kidney-blood-vessel-segmentation.streamlit.app/">Live lab</a></span>
+  </div>
+</footer>
+
+<div id="tip" role="tooltip"></div>
+<script type="application/json" id="spec-seeds_val">{"$schema": "https://vega.github.io/schema/vega-lite/v6.4.1.json", "autosize": {"contains": "padding", "type": "fit"}, "config": {"axis": {"domainColor": "#3a424d", "gridColor": "#232a33", "labelColor": "#9aa4b0", "labelFontSize": 12, "tickColor": "#3a424d", "titleColor": "#c9ced6", "titleFontSize": 12, "titleFontWeight": 500}, "axisX": {"labelOverlap": true, "tickCount": 8}, "axisY": {"labelLimit": 220}, "background": "transparent", "font": "Inter", "legend": {"labelColor": "#c9ced6", "labelFontSize": 12}, "view": {"continuousHeight": 300, "continuousWidth": 300, "stroke": null}}, "data": {"name": "data-28ef24514e2db06e7283d12a1374d9ef"}, "datasets": {"data-25aafaff444e97b023a01717bcfba7bc": [{"arm": "Baseline", "dice": 0.20007123440282407, "seed": "42"}, {"arm": "Baseline", "dice": 0.21825774485815438, "seed": "1"}, {"arm": "Baseline", "dice": 0.21556379171825996, "seed": "2"}, {"arm": "Baseline", "dice": 0.20465738938768654, "seed": "3"}, {"arm": "Baseline", "dice": 0.21487575134188303, "seed": "4"}, {"arm": "Baseline", "dice": 0.23839036206285225, "seed": "5"}, {"arm": "Baseline", "dice": 0.22130364712169287, "seed": "6"}, {"arm": "Baseline", "dice": 0.1871229898641476, "seed": "7"}, {"arm": "Baseline", "dice": 0.19402933731056102, "seed": "8"}, {"arm": "Baseline", "dice": 0.24433552706602282, "seed": "9"}, {"arm": "Baseline", "dice": 0.15642772021312296, "seed": "10"}, {"arm": "Baseline", "dice": 0.17733028233695344, "seed": "11"}, {"arm": "Baseline", "dice": 0.26035351779415106, "seed": "12"}, {"arm": "Baseline", "dice": 0.22932915805485532, "seed": "13"}, {"arm": "Baseline", "dice": 0.23137797188946366, "seed": "14"}, {"arm": "Baseline", "dice": 0.16598941230870717, "seed": "15"}, {"arm": "Baseline", "dice": 0.20366251274499475, "seed": "16"}, {"arm": "Baseline", "dice": 0.24173966391174717, "seed": "17"}, {"arm": "Baseline", "dice": 0.24955584294536004, "seed": "18"}, {"arm": "Baseline", "dice": 0.20806890014050408, "seed": "19"}, {"arm": "Stain jitter", "dice": 0.24365484758700187, "seed": "42"}, {"arm": "Stain jitter", "dice": 0.2124411716670885, "seed": "1"}, {"arm": "Stain jitter", "dice": 0.21501595869223777, "seed": "2"}, {"arm": "Stain jitter", "dice": 0.2342431107099261, "seed": "3"}, {"arm": "Stain jitter", "dice": 0.24266300319288336, "seed": "4"}, {"arm": "Stain jitter", "dice": 0.2287746019697599, "seed": "5"}, {"arm": "Stain jitter", "dice": 0.22420065777977247, "seed": "6"}, {"arm": "Stain jitter", "dice": 0.2243848915498359, "seed": "7"}, {"arm": "Stain jitter", "dice": 0.2343041874789646, "seed": "8"}, {"arm": "Stain jitter", "dice": 0.23059622913513414, "seed": "9"}, {"arm": "Stain jitter", "dice": 0.24384294304111362, "seed": "10"}, {"arm": "Stain jitter", "dice": 0.2535155483579371, "seed": "11"}, {"arm": "Stain jitter", "dice": 0.24478106684185352, "seed": "12"}, {"arm": "Stain jitter", "dice": 0.2135287650850883, "seed": "13"}, {"arm": "Stain jitter", "dice": 0.25236736058680403, "seed": "14"}, {"arm": "Stain jitter", "dice": 0.2211961058600135, "seed": "15"}, {"arm": "Stain jitter", "dice": 0.2162651687019277, "seed": "16"}, {"arm": "Stain jitter", "dice": 0.21619911686763646, "seed": "17"}, {"arm": "Stain jitter", "dice": 0.23404406753427268, "seed": "18"}, {"arm": "Stain jitter", "dice": 0.22941885945748688, "seed": "19"}, {"arm": "Stain normalisation", "dice": 0.20660545216400064, "seed": "42"}, {"arm": "Stain normalisation", "dice": 0.20696075871786065, "seed": "1"}, {"arm": "Stain normalisation", "dice": 0.18553485670359046, "seed": "2"}, {"arm": "Stain normalisation", "dice": 0.21671270073255414, "seed": "3"}, {"arm": "Stain normalisation", "dice": 0.2021672049667141, "seed": "4"}, {"arm": "Stain normalisation", "dice": 0.1890424726015796, "seed": "5"}, {"arm": "Stain normalisation", "dice": 0.18561381843729463, "seed": "6"}, {"arm": "Stain normalisation", "dice": 0.21764562978985366, "seed": "7"}, {"arm": "Stain normalisation", "dice": 0.1949656863657394, "seed": "8"}, {"arm": "Stain normalisation", "dice": 0.20216158378079635, "seed": "9"}, {"arm": "Stain normalisation", "dice": 0.1314478390066937, "seed": "10"}, {"arm": "Stain normalisation", "dice": 0.19889042190887332, "seed": "11"}, {"arm": "Stain normalisation", "dice": 0.1661470877238178, "seed": "12"}, {"arm": "Stain normalisation", "dice": 0.18577371428460462, "seed": "13"}, {"arm": "Stain normalisation", "dice": 0.21577344294681866, "seed": "14"}, {"arm": "Stain normalisation", "dice": 0.2110858335328503, "seed": "15"}, {"arm": "Stain normalisation", "dice": 0.21430946165940085, "seed": "16"}, {"arm": "Stain normalisation", "dice": 0.21576250562139063, "seed": "17"}, {"arm": "Stain normalisation", "dice": 0.18928969492794642, "seed": "18"}, {"arm": "Stain normalisation", "dice": 0.1768289542062453, "seed": "19"}, {"arm": "Jitter + normalisation", "dice": 0.14946787825690208, "seed": "42"}, {"arm": "Jitter + normalisation", "dice": 0.13258944131716774, "seed": "1"}, {"arm": "Jitter + normalisation", "dice": 0.14267197661219, "seed": "2"}, {"arm": "Jitter + normalisation", "dice": 0.1459341566884996, "seed": "3"}, {"arm": "Jitter + normalisation", "dice": 0.14490274312561544, "seed": "4"}, {"arm": "Jitter + normalisation", "dice": 0.17607848887001826, "seed": "5"}, {"arm": "Jitter + normalisation", "dice": 0.1383259766731387, "seed": "6"}, {"arm": "Jitter + normalisation", "dice": 0.13898560727480097, "seed": "7"}, {"arm": "Jitter + normalisation", "dice": 0.1392177622801198, "seed": "8"}, {"arm": "Jitter + normalisation", "dice": 0.13981396611232863, "seed": "9"}, {"arm": "Jitter + normalisation", "dice": 0.15162281976798775, "seed": "10"}, {"arm": "Jitter + normalisation", "dice": 0.1405908467397578, "seed": "11"}, {"arm": "Jitter + normalisation", "dice": 0.16393849040890696, "seed": "12"}, {"arm": "Jitter + normalisation", "dice": 0.14492309187700256, "seed": "13"}, {"arm": "Jitter + normalisation", "dice": 0.15664588387755402, "seed": "14"}, {"arm": "Jitter + normalisation", "dice": 0.13624525185615685, "seed": "15"}, {"arm": "Jitter + normalisation", "dice": 0.12960543054726983, "seed": "16"}, {"arm": "Jitter + normalisation", "dice": 0.1439321758697019, "seed": "17"}, {"arm": "Jitter + normalisation", "dice": 0.161290124158434, "seed": "18"}, {"arm": "Jitter + normalisation", "dice": 0.147397081897723, "seed": "19"}], "data-28ef24514e2db06e7283d12a1374d9ef": [{"arm": "Baseline", "hi": 0.22472615647321192, "lo": 0.20073510422414198, "mean": 0.21312213787369721}, {"arm": "Stain jitter", "hi": 0.2363584827566917, "lo": 0.22552903046689649, "mean": 0.23077188310483693}, {"arm": "Stain normalisation", "hi": 0.2040730236121567, "lo": 0.18588603009497986, "mean": 0.19563595600393127}, {"arm": "Jitter + normalisation", "hi": 0.15129133945570333, "lo": 0.14184452221109334, "mean": 0.1462089597105638}]}, "height": 260, "layer": [{"encoding": {"x": {"field": "lo", "type": "quantitative"}, "x2": {"field": "hi"}, "y": {"field": "arm", "sort": ["Baseline", "Stain jitter", "Stain normalisation", "Jitter + normalisation"], "title": null, "type": "nominal"}}, "mark": {"color": "#888", "strokeWidth": 3, "type": "rule"}}, {"encoding": {"tooltip": [{"field": "arm", "type": "nominal"}, {"field": "mean", "format": ".4f", "type": "quantitative"}, {"field": "lo", "format": ".4f", "type": "quantitative"}, {"field": "hi", "format": ".4f", "type": "quantitative"}], "x": {"field": "mean", "type": "quantitative"}, "y": {"field": "arm", "sort": ["Baseline", "Stain jitter", "Stain normalisation", "Jitter + normalisation"], "title": null, "type": "nominal"}}, "mark": {"color": "#888", "size": 26, "thickness": 3, "type": "tick"}}, {"data": {"name": "data-25aafaff444e97b023a01717bcfba7bc"}, "encoding": {"color": {"field": "arm", "legend": null, "scale": {"domain": ["Baseline", "Stain jitter", "Stain normalisation", "Jitter + normalisation"], "range": ["#a09cad", "#5b93ef", "#d6a03c", "#de6b93"]}, "type": "nominal"}, "tooltip": [{"field": "arm", "type": "nominal"}, {"field": "seed", "type": "nominal"}, {"field": "dice", "format": ".4f", "type": "quantitative"}], "x": {"field": "dice", "title": "mean per-tile dice per training run", "type": "quantitative"}, "y": {"field": "arm", "sort": ["Baseline", "Stain jitter", "Stain normalisation", "Jitter + normalisation"], "title": null, "type": "nominal"}, "yOffset": {"field": "jitter", "type": "quantitative"}}, "mark": {"opacity": 0.75, "size": 70, "type": "circle"}, "transform": [{"as": "jitter", "calculate": "random() * 20 - 10"}]}], "width": "container"}</script>
+<script type="application/json" id="spec-seeds_test">{"$schema": "https://vega.github.io/schema/vega-lite/v6.4.1.json", "autosize": {"contains": "padding", "type": "fit"}, "config": {"axis": {"domainColor": "#3a424d", "gridColor": "#232a33", "labelColor": "#9aa4b0", "labelFontSize": 12, "tickColor": "#3a424d", "titleColor": "#c9ced6", "titleFontSize": 12, "titleFontWeight": 500}, "axisX": {"labelOverlap": true, "tickCount": 8}, "axisY": {"labelLimit": 220}, "background": "transparent", "font": "Inter", "legend": {"labelColor": "#c9ced6", "labelFontSize": 12}, "view": {"continuousHeight": 300, "continuousWidth": 300, "stroke": null}}, "data": {"name": "data-7561c3fb0fdce0db5f66206294952fa1"}, "datasets": {"data-0994d59f42e0d7066d20d7ded7c344a8": [{"arm": "Baseline", "dice": 0.16664584393740875, "seed": "42"}, {"arm": "Baseline", "dice": 0.22031884598266732, "seed": "1"}, {"arm": "Baseline", "dice": 0.1783159993046358, "seed": "2"}, {"arm": "Baseline", "dice": 0.1589272539241189, "seed": "3"}, {"arm": "Baseline", "dice": 0.17062084673166772, "seed": "4"}, {"arm": "Baseline", "dice": 0.17351065418766584, "seed": "5"}, {"arm": "Baseline", "dice": 0.181548786742254, "seed": "6"}, {"arm": "Baseline", "dice": 0.17850932612299608, "seed": "7"}, {"arm": "Baseline", "dice": 0.17430260976893547, "seed": "8"}, {"arm": "Baseline", "dice": 0.20969661067979797, "seed": "9"}, {"arm": "Baseline", "dice": 0.11410187663101236, "seed": "10"}, {"arm": "Baseline", "dice": 0.19352774465007194, "seed": "11"}, {"arm": "Baseline", "dice": 0.17673175948381845, "seed": "12"}, {"arm": "Baseline", "dice": 0.18007232610446558, "seed": "13"}, {"arm": "Baseline", "dice": 0.20593654966980768, "seed": "14"}, {"arm": "Baseline", "dice": 0.13996093203494847, "seed": "15"}, {"arm": "Baseline", "dice": 0.16839277372881775, "seed": "16"}, {"arm": "Baseline", "dice": 0.2067316161728017, "seed": "17"}, {"arm": "Baseline", "dice": 0.20166803356107688, "seed": "18"}, {"arm": "Baseline", "dice": 0.19004489384349274, "seed": "19"}, {"arm": "Stain jitter", "dice": 0.1985449371078579, "seed": "42"}, {"arm": "Stain jitter", "dice": 0.19374929310567557, "seed": "1"}, {"arm": "Stain jitter", "dice": 0.18971489682421253, "seed": "2"}, {"arm": "Stain jitter", "dice": 0.1996107802321274, "seed": "3"}, {"arm": "Stain jitter", "dice": 0.22663659132116784, "seed": "4"}, {"arm": "Stain jitter", "dice": 0.2038949193446071, "seed": "5"}, {"arm": "Stain jitter", "dice": 0.2206012432233729, "seed": "6"}, {"arm": "Stain jitter", "dice": 0.22292095342388005, "seed": "7"}, {"arm": "Stain jitter", "dice": 0.1777017588135005, "seed": "8"}, {"arm": "Stain jitter", "dice": 0.2324164526967574, "seed": "9"}, {"arm": "Stain jitter", "dice": 0.24100711388716134, "seed": "10"}, {"arm": "Stain jitter", "dice": 0.23332243842320854, "seed": "11"}, {"arm": "Stain jitter", "dice": 0.2178663146119901, "seed": "12"}, {"arm": "Stain jitter", "dice": 0.180205342556019, "seed": "13"}, {"arm": "Stain jitter", "dice": 0.20816929528331587, "seed": "14"}, {"arm": "Stain jitter", "dice": 0.21641219287957322, "seed": "15"}, {"arm": "Stain jitter", "dice": 0.1640515507091734, "seed": "16"}, {"arm": "Stain jitter", "dice": 0.18678719508763364, "seed": "17"}, {"arm": "Stain jitter", "dice": 0.16265932946364897, "seed": "18"}, {"arm": "Stain jitter", "dice": 0.21030266017170632, "seed": "19"}, {"arm": "Stain normalisation", "dice": 0.10804377775617117, "seed": "42"}, {"arm": "Stain normalisation", "dice": 0.17518704401872534, "seed": "1"}, {"arm": "Stain normalisation", "dice": 0.12619230037342077, "seed": "2"}, {"arm": "Stain normalisation", "dice": 0.12520238729866756, "seed": "3"}, {"arm": "Stain normalisation", "dice": 0.1475270516071734, "seed": "4"}, {"arm": "Stain normalisation", "dice": 0.1443040323525158, "seed": "5"}, {"arm": "Stain normalisation", "dice": 0.1296358037422676, "seed": "6"}, {"arm": "Stain normalisation", "dice": 0.15332641360904442, "seed": "7"}, {"arm": "Stain normalisation", "dice": 0.13354740825080896, "seed": "8"}, {"arm": "Stain normalisation", "dice": 0.14400029752683832, "seed": "9"}, {"arm": "Stain normalisation", "dice": 0.07812008734197957, "seed": "10"}, {"arm": "Stain normalisation", "dice": 0.15536742413745522, "seed": "11"}, {"arm": "Stain normalisation", "dice": 0.14246257605935436, "seed": "12"}, {"arm": "Stain normalisation", "dice": 0.12108030299850833, "seed": "13"}, {"arm": "Stain normalisation", "dice": 0.1409202752342768, "seed": "14"}, {"arm": "Stain normalisation", "dice": 0.1697249769415353, "seed": "15"}, {"arm": "Stain normalisation", "dice": 0.14036286339243131, "seed": "16"}, {"arm": "Stain normalisation", "dice": 0.16712647971008088, "seed": "17"}, {"arm": "Stain normalisation", "dice": 0.1466660335777399, "seed": "18"}, {"arm": "Stain normalisation", "dice": 0.16370608520657817, "seed": "19"}, {"arm": "Jitter + normalisation", "dice": 0.0862828879892556, "seed": "42"}, {"arm": "Jitter + normalisation", "dice": 0.07357021172129488, "seed": "1"}, {"arm": "Jitter + normalisation", "dice": 0.08528310422402666, "seed": "2"}, {"arm": "Jitter + normalisation", "dice": 0.08299840333250601, "seed": "3"}, {"arm": "Jitter + normalisation", "dice": 0.10260895093460942, "seed": "4"}, {"arm": "Jitter + normalisation", "dice": 0.10016662894896095, "seed": "5"}, {"arm": "Jitter + normalisation", "dice": 0.08113942430516291, "seed": "6"}, {"arm": "Jitter + normalisation", "dice": 0.0905121792591594, "seed": "7"}, {"arm": "Jitter + normalisation", "dice": 0.0938272550201558, "seed": "8"}, {"arm": "Jitter + normalisation", "dice": 0.08438008518481582, "seed": "9"}, {"arm": "Jitter + normalisation", "dice": 0.10341981433039295, "seed": "10"}, {"arm": "Jitter + normalisation", "dice": 0.08920759209471217, "seed": "11"}, {"arm": "Jitter + normalisation", "dice": 0.10374606514270387, "seed": "12"}, {"arm": "Jitter + normalisation", "dice": 0.07955079525070814, "seed": "13"}, {"arm": "Jitter + normalisation", "dice": 0.0915973471411063, "seed": "14"}, {"arm": "Jitter + normalisation", "dice": 0.08686562643446626, "seed": "15"}, {"arm": "Jitter + normalisation", "dice": 0.0808709647339666, "seed": "16"}, {"arm": "Jitter + normalisation", "dice": 0.09334775872683009, "seed": "17"}, {"arm": "Jitter + normalisation", "dice": 0.08927120652465202, "seed": "18"}, {"arm": "Jitter + normalisation", "dice": 0.08946434509192573, "seed": "19"}], "data-7561c3fb0fdce0db5f66206294952fa1": [{"arm": "Baseline", "hi": 0.18894319874363177, "lo": 0.16836479192697543, "mean": 0.17947826416312307}, {"arm": "Stain jitter", "hi": 0.21404256015872708, "lo": 0.19460162207918644, "mean": 0.20432876295832947}, {"arm": "Stain normalisation", "hi": 0.14962944552245772, "lo": 0.1302512937326228, "mean": 0.14062518105677865}, {"arm": "Jitter + normalisation", "hi": 0.0933746776753683, "lo": 0.0858341767782836, "mean": 0.08940553231957057}]}, "height": 260, "layer": [{"encoding": {"x": {"field": "lo", "type": "quantitative"}, "x2": {"field": "hi"}, "y": {"field": "arm", "sort": ["Baseline", "Stain jitter", "Stain normalisation", "Jitter + normalisation"], "title": null, "type": "nominal"}}, "mark": {"color": "#888", "strokeWidth": 3, "type": "rule"}}, {"encoding": {"tooltip": [{"field": "arm", "type": "nominal"}, {"field": "mean", "format": ".4f", "type": "quantitative"}, {"field": "lo", "format": ".4f", "type": "quantitative"}, {"field": "hi", "format": ".4f", "type": "quantitative"}], "x": {"field": "mean", "type": "quantitative"}, "y": {"field": "arm", "sort": ["Baseline", "Stain jitter", "Stain normalisation", "Jitter + normalisation"], "title": null, "type": "nominal"}}, "mark": {"color": "#888", "size": 26, "thickness": 3, "type": "tick"}}, {"data": {"name": "data-0994d59f42e0d7066d20d7ded7c344a8"}, "encoding": {"color": {"field": "arm", "legend": null, "scale": {"domain": ["Baseline", "Stain jitter", "Stain normalisation", "Jitter + normalisation"], "range": ["#a09cad", "#5b93ef", "#d6a03c", "#de6b93"]}, "type": "nominal"}, "tooltip": [{"field": "arm", "type": "nominal"}, {"field": "seed", "type": "nominal"}, {"field": "dice", "format": ".4f", "type": "quantitative"}], "x": {"field": "dice", "title": "mean per-tile dice per training run", "type": "quantitative"}, "y": {"field": "arm", "sort": ["Baseline", "Stain jitter", "Stain normalisation", "Jitter + normalisation"], "title": null, "type": "nominal"}, "yOffset": {"field": "jitter", "type": "quantitative"}}, "mark": {"opacity": 0.75, "size": 70, "type": "circle"}, "transform": [{"as": "jitter", "calculate": "random() * 20 - 10"}]}], "width": "container"}</script>
+<script type="application/json" id="spec-sweep_h_scale">{"$schema": "https://vega.github.io/schema/vega-lite/v6.4.1.json", "autosize": {"contains": "padding", "type": "fit"}, "config": {"axis": {"domainColor": "#3a424d", "gridColor": "#232a33", "labelColor": "#9aa4b0", "labelFontSize": 12, "tickColor": "#3a424d", "titleColor": "#c9ced6", "titleFontSize": 12, "titleFontWeight": 500}, "axisX": {"labelOverlap": true, "tickCount": 8}, "axisY": {"labelLimit": 220}, "background": "transparent", "font": "Inter", "legend": {"labelColor": "#c9ced6", "labelFontSize": 12}, "view": {"continuousHeight": 300, "continuousWidth": 300, "stroke": null}}, "datasets": {"data-bc60688097785f63f16b8f5e7304a150": [{"hi": 1.05, "lo": 0.95}], "data-df503e9a574fb43e6e1b198eccd6fec1": [{"Dice": 0.523531131249914, "arm": "Baseline", "shift": 0.7}, {"Dice": 0.5544983513909421, "arm": "Stain jitter", "shift": 0.7}, {"Dice": 0.3516366728082903, "arm": "Stain normalisation", "shift": 0.7}, {"Dice": 0.13093307056838405, "arm": "Jitter + normalisation", "shift": 0.7}, {"Dice": 0.43806133182523643, "arm": "Baseline", "shift": 0.8}, {"Dice": 0.4663856977789872, "arm": "Stain jitter", "shift": 0.8}, {"Dice": 0.3207030142697706, "arm": "Stain normalisation", "shift": 0.8}, {"Dice": 0.09971136184812787, "arm": "Jitter + normalisation", "shift": 0.8}, {"Dice": 0.33935306385348823, "arm": "Baseline", "shift": 0.9}, {"Dice": 0.39679102623479184, "arm": "Stain jitter", "shift": 0.9}, {"Dice": 0.2756311597157402, "arm": "Stain normalisation", "shift": 0.9}, {"Dice": 0.08765664567334626, "arm": "Jitter + normalisation", "shift": 0.9}, {"Dice": 0.30905795417897913, "arm": "Baseline", "shift": 1.0}, {"Dice": 0.3657825601922994, "arm": "Stain jitter", "shift": 1.0}, {"Dice": 0.23535321821276184, "arm": "Stain normalisation", "shift": 1.0}, {"Dice": 0.0882567033817159, "arm": "Jitter + normalisation", "shift": 1.0}, {"Dice": 0.26193510440514683, "arm": "Baseline", "shift": 1.1}, {"Dice": 0.3468408328244981, "arm": "Stain jitter", "shift": 1.1}, {"Dice": 0.21170141224205882, "arm": "Stain normalisation", "shift": 1.1}, {"Dice": 0.08297316494819236, "arm": "Jitter + normalisation", "shift": 1.1}, {"Dice": 0.25338042381809595, "arm": "Baseline", "shift": 1.2}, {"Dice": 0.3467389340583677, "arm": "Stain jitter", "shift": 1.2}, {"Dice": 0.1922901219412015, "arm": "Stain normalisation", "shift": 1.2}, {"Dice": 0.08519106274832465, "arm": "Jitter + normalisation", "shift": 1.2}, {"Dice": 0.235130255356022, "arm": "Baseline", "shift": 1.3}, {"Dice": 0.34582769187149637, "arm": "Stain jitter", "shift": 1.3}, {"Dice": 0.1905411861079965, "arm": "Stain normalisation", "shift": 1.3}, {"Dice": 0.08020643513776059, "arm": "Jitter + normalisation", "shift": 1.3}]}, "height": 280, "layer": [{"data": {"name": "data-bc60688097785f63f16b8f5e7304a150"}, "encoding": {"x": {"field": "lo", "type": "quantitative"}, "x2": {"field": "hi"}}, "mark": {"color": "#19a974", "opacity": 0.12, "type": "rect"}}, {"data": {"name": "data-df503e9a574fb43e6e1b198eccd6fec1"}, "encoding": {"color": {"field": "arm", "legend": {"orient": "bottom", "title": null}, "scale": {"domain": ["Baseline", "Stain jitter", "Stain normalisation", "Jitter + normalisation"], "range": ["#a09cad", "#5b93ef", "#d6a03c", "#de6b93"]}, "type": "nominal"}, "tooltip": [{"field": "arm", "type": "nominal"}, {"field": "shift", "type": "quantitative"}, {"field": "Dice", "format": ".4f", "type": "quantitative"}], "x": {"field": "shift", "scale": {"domain": [0.7, 1.3], "nice": false, "zero": false}, "title": "Purple stain strength (haematoxylin)", "type": "quantitative"}, "y": {"field": "Dice", "type": "quantitative"}}, "mark": {"point": true, "type": "line"}}], "width": "container"}</script>
+<script type="application/json" id="spec-sweep_e_scale">{"$schema": "https://vega.github.io/schema/vega-lite/v6.4.1.json", "autosize": {"contains": "padding", "type": "fit"}, "config": {"axis": {"domainColor": "#3a424d", "gridColor": "#232a33", "labelColor": "#9aa4b0", "labelFontSize": 12, "tickColor": "#3a424d", "titleColor": "#c9ced6", "titleFontSize": 12, "titleFontWeight": 500}, "axisX": {"labelOverlap": true, "tickCount": 8}, "axisY": {"labelLimit": 220}, "background": "transparent", "font": "Inter", "legend": {"labelColor": "#c9ced6", "labelFontSize": 12}, "view": {"continuousHeight": 300, "continuousWidth": 300, "stroke": null}}, "datasets": {"data-5443cb51a3ab153f9994c857a017cb57": [{"Dice": 0.25289843871153245, "arm": "Baseline", "shift": 0.7}, {"Dice": 0.3110654896353477, "arm": "Stain jitter", "shift": 0.7}, {"Dice": 0.23386737872889662, "arm": "Stain normalisation", "shift": 0.7}, {"Dice": 0.10557374689728188, "arm": "Jitter + normalisation", "shift": 0.7}, {"Dice": 0.25769748989840957, "arm": "Baseline", "shift": 0.8}, {"Dice": 0.3076863020677375, "arm": "Stain jitter", "shift": 0.8}, {"Dice": 0.24316266269352915, "arm": "Stain normalisation", "shift": 0.8}, {"Dice": 0.10244591629264578, "arm": "Jitter + normalisation", "shift": 0.8}, {"Dice": 0.27701365764549485, "arm": "Baseline", "shift": 0.9}, {"Dice": 0.3266159128253224, "arm": "Stain jitter", "shift": 0.9}, {"Dice": 0.22323296039566004, "arm": "Stain normalisation", "shift": 0.9}, {"Dice": 0.09010344426070696, "arm": "Jitter + normalisation", "shift": 0.9}, {"Dice": 0.30905795417897913, "arm": "Baseline", "shift": 1.0}, {"Dice": 0.3657825601922994, "arm": "Stain jitter", "shift": 1.0}, {"Dice": 0.23535321821276184, "arm": "Stain normalisation", "shift": 1.0}, {"Dice": 0.0882567033817159, "arm": "Jitter + normalisation", "shift": 1.0}, {"Dice": 0.31504767169031805, "arm": "Baseline", "shift": 1.1}, {"Dice": 0.3948598130862544, "arm": "Stain jitter", "shift": 1.1}, {"Dice": 0.28271544978877905, "arm": "Stain normalisation", "shift": 1.1}, {"Dice": 0.08762608951242823, "arm": "Jitter + normalisation", "shift": 1.1}, {"Dice": 0.3151620741858917, "arm": "Baseline", "shift": 1.2}, {"Dice": 0.40587618048476437, "arm": "Stain jitter", "shift": 1.2}, {"Dice": 0.30047875228443693, "arm": "Stain normalisation", "shift": 1.2}, {"Dice": 0.09393087097104445, "arm": "Jitter + normalisation", "shift": 1.2}, {"Dice": 0.31170271769591557, "arm": "Baseline", "shift": 1.3}, {"Dice": 0.42058981233451087, "arm": "Stain jitter", "shift": 1.3}, {"Dice": 0.3403521554357247, "arm": "Stain normalisation", "shift": 1.3}, {"Dice": 0.10797537905996898, "arm": "Jitter + normalisation", "shift": 1.3}], "data-bc60688097785f63f16b8f5e7304a150": [{"hi": 1.05, "lo": 0.95}]}, "height": 280, "layer": [{"data": {"name": "data-bc60688097785f63f16b8f5e7304a150"}, "encoding": {"x": {"field": "lo", "type": "quantitative"}, "x2": {"field": "hi"}}, "mark": {"color": "#19a974", "opacity": 0.12, "type": "rect"}}, {"data": {"name": "data-5443cb51a3ab153f9994c857a017cb57"}, "encoding": {"color": {"field": "arm", "legend": {"orient": "bottom", "title": null}, "scale": {"domain": ["Baseline", "Stain jitter", "Stain normalisation", "Jitter + normalisation"], "range": ["#a09cad", "#5b93ef", "#d6a03c", "#de6b93"]}, "type": "nominal"}, "tooltip": [{"field": "arm", "type": "nominal"}, {"field": "shift", "type": "quantitative"}, {"field": "Dice", "format": ".4f", "type": "quantitative"}], "x": {"field": "shift", "scale": {"domain": [0.7, 1.3], "nice": false, "zero": false}, "title": "Pink stain strength (eosin)", "type": "quantitative"}, "y": {"field": "Dice", "type": "quantitative"}}, "mark": {"point": true, "type": "line"}}], "width": "container"}</script>
+<script src="site.js"></script>
+</body>
+</html>

@@ -13,4 +13,4 @@ scipy>=1.11
 scikit-learn>=1.3
 umap-learn>=0.5
 streamlit>=1.36
-
+jinja2>=3.1
