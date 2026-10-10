@@ -31,6 +31,13 @@ python -m scripts.learning_curves   # figures/learning_curves.pdf from cached su
 python -m scripts.umap_activations  # figures/umap_activations.pdf (needs checkpoints)
 ```
 
+Live demo (`demo/`, never imported by `main.py` or `src/`). It reads `configs/rerun_v2.yaml` and the committed `artifacts_v2/phase3_summary.json`:
+
+```powershell
+streamlit run demo/app.py                         # needs data/raw, masks, results_v2/checkpoints
+python -m demo.build_deploy --out <dir outside repo> # stage app/ (GitHub + Streamlit Cloud) and weights/ (HF model repo); does not push
+```
+
 Lint the way CI does:
 
 ```powershell
@@ -93,7 +100,8 @@ Run tag is `unet_resnet34_{arm}_seed{seed}`. Three layers of caching, checked in
 
 ## Gotchas
 
-- **Adding or renaming an arm touches six places**: a builder in `src/data/transforms.py`, `_AUG_BUILDERS` in *both* `src/training/train.py` and `src/training/run_experiments.py`, `_ARMS`/`_ARM_COLORS`/`_ARM_LABELS` in `run_experiments.py`, `augs` in `configs/default.yaml`, `_PHASE3_ARMS` + `_PHASE3_RUN_TAG_BY_ARM` + the Wilcoxon key lists in `main.py`, and `ARMS` in `scripts/learning_curves.py`.
+- **Adding or renaming an arm touches six places**: a builder in `src/data/transforms.py`, `_AUG_BUILDERS` in *both* `src/training/train.py` and `src/training/run_experiments.py`, `_ARMS`/`_ARM_COLORS`/`_ARM_LABELS` in `run_experiments.py`, `augs` in `configs/default.yaml`, `_PHASE3_ARMS` + `_PHASE3_RUN_TAG_BY_ARM` + the Wilcoxon key lists in `main.py`, and `ARMS` in `scripts/learning_curves.py`. The demo adds two more: `EVAL_BUILDERS` in `demo/inference.py` and `ARM_STYLE`/`ARM_BLURB`/`ARM_PIPELINE` in `demo/views.py` (the app raises if an arm has no label).
+- `hed_shift` in `src/data/transforms.py` mirrors `HEDJitter.apply` with fixed alpha/beta (D channel untouched). Keep them in sync.
 - `ARTIFACT_FIGURE_FILES` in `main.py` still lists legacy figure names without the seed suffix (`unet_resnet34_rgb_aug_loss.png`), while `train_one_run` writes `{run_tag}_loss.png` (i.e. `..._seed42_loss.png`). Newly trained figures are therefore not picked up by `_save_artifacts`; the committed `artifacts/` PNGs are the legacy-named ones. Fix the list if you regenerate figures.
 - `run_phase3`'s seed list is hardcoded in `_DEFAULT_SEEDS`, not read from `cfg.seed` — `cfg.seed` only seeds the top-level `set_seed` and the split RNG.
 - Device resolution is duplicated: `main._device_string` (mps -> cpu) and `train._resolve_device` (also honours cuda). Keep them consistent.

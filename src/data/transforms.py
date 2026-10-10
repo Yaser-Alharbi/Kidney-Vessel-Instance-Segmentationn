@@ -81,6 +81,33 @@ class HEDJitter(ImageOnlyTransform):
         return ("sigma",)
 
 
+def hed_shift(
+    img: np.ndarray,
+    h_scale: float,
+    e_scale: float,
+    h_bias: float = 0.0,
+    e_bias: float = 0.0,
+) -> np.ndarray:
+    """Deterministic HED shift for the demo's stain stress test.
+
+    Mirrors the maths of `HEDJitter.apply` (hed * alpha + beta) with fixed
+    alpha/beta instead of random draws. The D channel is left unchanged,
+    whereas training-time `HEDJitter` jitters D too. Keep the two in sync.
+    """
+    h, w, _ = img.shape
+    hed = _rgb_to_od(img.reshape(-1, 3)) @ _HED_FROM_RGB
+    hed = hed * np.array([[h_scale, e_scale, 1.0]]) + np.array([[h_bias, e_bias, 0.0]])
+    rgb = _od_to_rgb(hed @ _RGB_FROM_HED).reshape(h, w, 3)
+    return rgb.astype(np.uint8)
+
+
+def hed_channels(img: np.ndarray) -> Dict[str, np.ndarray]:
+    """Split an RGB tile into H and E optical-density maps, [H, W] float64."""
+    h, w, _ = img.shape
+    hed = _rgb_to_od(img.reshape(-1, 3)) @ _HED_FROM_RGB
+    return {"H": hed[:, 0].reshape(h, w), "E": hed[:, 1].reshape(h, w)}
+
+
 class MacenkoNormalize(ImageOnlyTransform):
     """Macenko stain normalization to a fixed reference (image only).
 

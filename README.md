@@ -48,6 +48,21 @@ data/raw/
 
 then `python main.py`. The full sweep (12 runs) completes in approximately 27 minutes on Apple Silicon (MPS) per `wall_time_seconds` in `phase3_summary.json`. Falls back to CPU.
 
+## Live demo
+
+**Vessel Stain Lab**: [vessel-stain-lab.streamlit.app](https://vessel-stain-lab.streamlit.app/) (Streamlit Community Cloud; if it has been idle, click "wake up" and give it a moment).
+
+An interactive viewer for the v2 run (20 seeds per arm, two test WSIs). It has a tile explorer with every arm's prediction, a stain stress test with live inference, cross-seed results, and a methods view. A sidebar toggle switches between technical and plain-language views. Statistics come from the committed `artifacts_v2/phase3_summary.json`; images and live inference use the seed-42 models.
+
+Run it locally (needs `data/raw/`, `data/processed/masks/` and `results_v2/checkpoints/`):
+
+```bash
+pip install -r requirements.txt
+streamlit run demo/app.py
+```
+
+`python -m demo.build_deploy --out <folder outside the repo>` stages the deployment. `app/` holds the curated tiles, seed-42 prediction masks and slim CPU requirements, and goes to its own GitHub repo for Streamlit Community Cloud. `weights/` holds the seed-42 checkpoints and goes to a Hugging Face model repo, which the app downloads from on first start. It does not push.
+
 ## Repository structure
 
 ```text
@@ -64,6 +79,7 @@ then `python main.py`. The full sweep (12 runs) completes in approximately 27 mi
 ├── scripts/
 │   ├── learning_curves.py
 │   └── umap_activations.py
+├── demo/                   # Streamlit demo + deploy builder (not used by main.py)
 ├── data/                   # raw/ + processed/ (gitignored)
 ├── results/                # per-run figures, JSONs (gitignored)
 ├── artifacts/              # cached outputs (committed for replay)
