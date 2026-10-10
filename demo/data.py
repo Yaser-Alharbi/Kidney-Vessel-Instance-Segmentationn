@@ -14,6 +14,7 @@ Functions here are plain (no Streamlit); `demo/app.py` adds caching.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -27,14 +28,20 @@ MODEL_NAME = "unet_resnet34"
 LIVE_SEED = 42
 CONFIG_PATH = project_root() / "configs" / "rerun_v2.yaml"
 ASSETS_DIR = project_root() / "demo_assets"
+REPO_URL = "https://github.com/Yaser-Alharbi/kidney-blood-vessel-segmentation"
+SITE_URL = "https://yaser-alharbi.github.io/kidney-blood-vessel-segmentation/"
+LAB_URL = "https://kidney-blood-vessel-segmentation.streamlit.app/"
+WEIGHTS_URL = "https://huggingface.co/Yaser-Alharbi/vessel-stain-lab-weights"
+FORCE_CURATED_ENV = "DEMO_FORCE_CURATED"  # "1" simulates the deployed app locally
 
+# tile rankings (rank_tiles keys on position, so keep the order)
 SORTS = (
-    "Biggest HED gain over RGB",
-    "Biggest HED loss vs RGB",
-    "Hardest (lowest mean Dice)",
-    "Easiest (highest mean Dice)",
-    "Most seed-to-seed variation",
-    "Tile id",
+    "Largest stain-jitter gain (where it helps most)",
+    "Largest stain-jitter loss (where it hurts most)",
+    "Lowest mean Dice (hardest tiles)",
+    "Highest mean Dice (easiest tiles)",
+    "Highest Dice std across runs (least consistent)",
+    "Tile id (all tiles)",
 )
 
 
@@ -115,7 +122,9 @@ def rank_tiles(cube: Cube, sort: str, allowed: Optional[List[str]] = None) -> Li
 
 
 def local_mode(cfg: Config) -> bool:
-    """True when the repo's raw tiles and masks are on disk."""
+    """True when the repo's raw tiles and masks are on disk (and not overridden)."""
+    if os.environ.get(FORCE_CURATED_ENV) == "1":
+        return False
     return (cfg.paths.raw / "train").is_dir() and cfg.paths.masks.is_dir()
 
 

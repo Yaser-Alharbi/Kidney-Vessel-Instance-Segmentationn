@@ -1,0 +1,30 @@
+# Live lab (demo/app.py). Community Cloud reads this file from the repo root.
+# Colours mirror the story site's dark-theme tokens; keep the two in sync.
+
+[client]
+# Hide Streamlit's own developer/viewer menu items; only the About and
+# Report-a-bug entries from st.set_page_config remain.
+toolbarMode = "minimal"
+
+[server]
+maxUploadSize = 5
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+base = "dark"
+primaryColor = "#8ab4f8"
+backgroundColor = "#0d1014"
+secondaryBackgroundColor = "#151a21"
+textColor = "#e8eaed"
+borderColor = "#262d37"
+linkColor = "#8ab4f8"
+codeTextColor = "#b8c0cc"
+codeBackgroundColor = "#1b212a"
+dataframeHeaderBackgroundColor = "#151a21"
+baseRadius = "6px"
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+headingFont = "'Source Serif 4':https://fonts.googleapis.com/css2?family=Source+Serif+4:wght@400;600;700&display=swap"
+codeFont = "'JetBrains Mono':https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap"
+headingFontWeights = 600
