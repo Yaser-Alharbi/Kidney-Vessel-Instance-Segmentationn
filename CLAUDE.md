@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A graded coursework repo (UCL ELEC0135 / AMLS II) built around one experiment: a four-arm stain-augmentation ablation on the HuBMAP "Hacking the Human Vasculature" blood-vessel segmentation data. U-Net + ResNet-34, four augmentation arms x three seeds. `README.md` states the hypotheses; `TUTORIAL_AUTOGRADING.md` explains the GitHub Classroom autograder.
+A graded coursework repo (UCL ELEC0135 / AMLS II) built around one experiment: a four-arm stain-augmentation ablation on the HuBMAP "Hacking the Human Vasculature" blood-vessel segmentation data. U-Net + ResNet-34, four augmentation arms x three seeds. It doubles as a public portfolio piece: `README.md`, the story site (`docs/`, GitHub Pages) and the live lab (`demo/app.py`, Streamlit Community Cloud) all present the 20-seed v2 run only.
 
 Constraints imposed by the grader (do not break these):
 
@@ -31,12 +31,17 @@ python -m scripts.learning_curves   # figures/learning_curves.pdf from cached su
 python -m scripts.umap_activations  # figures/umap_activations.pdf (needs checkpoints)
 ```
 
-Live demo (`demo/`, never imported by `main.py` or `src/`). It reads `configs/rerun_v2.yaml` and the committed `artifacts_v2/phase3_summary.json`:
+Demo (`demo/`, never imported by `main.py` or `src/`). It reads `configs/rerun_v2.yaml` and the committed `artifacts_v2/phase3_summary.json`:
 
 ```powershell
-streamlit run demo/app.py                         # needs data/raw, masks, results_v2/checkpoints
-python -m demo.build_deploy --out <dir outside repo> # stage app/ (GitHub + Streamlit Cloud) and weights/ (HF model repo); does not push
+streamlit run demo/app.py              # live lab; local data if present, else demo_assets/ (DEMO_FORCE_CURATED=1 forces that)
+python -m demo.build_site              # story site -> docs/ (needs data/raw + results_v2 checkpoints); --showcase <tile>, --skip-images
+python -m demo.build_deploy            # rewrite demo_assets/ + demo/requirements.txt; --weights-out <dir> stages the HF weights repo
 ```
+
+- The story site is generated: edit `demo/site/index.html.j2` (+ `style.css`, `site.js`), never `docs/` by hand. Every number in the template must come through a filter (`f3`, `pval`, `pct`, `n`, ...); `build_site` fails if any number in the page text has no source. Values needing raw data (split sizes, showcase tile, sweep, Macenko orientation check) live in `docs/build_meta.json` so `--skip-images` works without data.
+- Colour tokens are duplicated in `demo/site/style.css` and `.streamlit/config.toml`; keep them in sync.
+- The lab deploys from this repo: Community Cloud entry `demo/app.py`, Python 3.11, `demo/requirements.txt` (generated, CPU torch wheels), `.streamlit/config.toml` at the root (`toolbarMode = "minimal"`). Checkpoints download from the HF repo named in `demo_assets/manifest.json`.
 
 Lint the way CI does:
 
@@ -100,11 +105,11 @@ Run tag is `unet_resnet34_{arm}_seed{seed}`. Three layers of caching, checked in
 
 ## Gotchas
 
-- **Adding or renaming an arm touches six places**: a builder in `src/data/transforms.py`, `_AUG_BUILDERS` in *both* `src/training/train.py` and `src/training/run_experiments.py`, `_ARMS`/`_ARM_COLORS`/`_ARM_LABELS` in `run_experiments.py`, `augs` in `configs/default.yaml`, `_PHASE3_ARMS` + `_PHASE3_RUN_TAG_BY_ARM` + the Wilcoxon key lists in `main.py`, and `ARMS` in `scripts/learning_curves.py`. The demo adds two more: `EVAL_BUILDERS` in `demo/inference.py` and `ARM_STYLE`/`ARM_BLURB`/`ARM_PIPELINE` in `demo/views.py` (the app raises if an arm has no label).
+- **Adding or renaming an arm touches six places**: a builder in `src/data/transforms.py`, `_AUG_BUILDERS` in *both* `src/training/train.py` and `src/training/run_experiments.py`, `_ARMS`/`_ARM_COLORS`/`_ARM_LABELS` in `run_experiments.py`, `augs` in `configs/default.yaml`, `_PHASE3_ARMS` + `_PHASE3_RUN_TAG_BY_ARM` + the Wilcoxon key lists in `main.py`, and `ARMS` in `scripts/learning_curves.py`. The demo adds two more: `EVAL_BUILDERS` in `demo/inference.py` and `ARM_STYLE`/`ARM_BLURB`/`ARM_ROLE`/`ARM_PIPELINE` in `demo/views.py` (the app raises if an arm has no label); `demo/build_site.py` also names arms in `BASE_ARM`/`JITTER_ARM`/`MAC_ARM`/`FULL_ARM`.
 - `hed_shift` in `src/data/transforms.py` mirrors `HEDJitter.apply` with fixed alpha/beta (D channel untouched). Keep them in sync.
 - `ARTIFACT_FIGURE_FILES` in `main.py` still lists legacy figure names without the seed suffix (`unet_resnet34_rgb_aug_loss.png`), while `train_one_run` writes `{run_tag}_loss.png` (i.e. `..._seed42_loss.png`). Newly trained figures are therefore not picked up by `_save_artifacts`; the committed `artifacts/` PNGs are the legacy-named ones. Fix the list if you regenerate figures.
 - `run_phase3`'s seed list is hardcoded in `_DEFAULT_SEEDS`, not read from `cfg.seed` — `cfg.seed` only seeds the top-level `set_seed` and the split RNG.
 - Device resolution is duplicated: `main._device_string` (mps -> cpu) and `train._resolve_device` (also honours cuda). Keep them consistent.
 - `src/data/transforms.py` keeps back-compat aliases (`get_stain_aware_transforms`, `stain_aware_hed_only`) so older checkpoints/configs resolve; don't delete them.
 - The UMAP step in `main()` is wrapped in a bare `except` and reported as non-fatal — a silent failure there will not fail the run.
-- `README.md` references `docs/ASSIGNMENT.md`, which is not in the repo.
+- `TUTORIAL_AUTOGRADING.md` was removed; the grader workflows (`classroom.yml`, `score.yml`) are untouched and only run on the `feedback` branch. `lint.yml` is the real CI on `main` (pinned pylint, `--fail-under` floor).
